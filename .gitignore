@@ -1,0 +1,61 @@
+# ==============================================================================
+# Git Ignore - Pharmaceutical Inventory Verification System
+# ==============================================================================
+
+# 1. Dependencies (Never commit node_modules)
+node_modules/
+*/node_modules/
+**/node_modules/
+
+# 2. Environment Variables & Credentials (CRITICAL: Never commit database passwords or keys)
+.env
+.env.*
+.env*.local
+*.env
+!.env.example
+!mobile/.env.example
+
+# 3. Expo & React Native Build Outputs
+.expo/
+*/.expo/
+dist/
+*/dist/
+web-build/
+*/web-build/
+expo-env.d.ts
+*.tsbuildinfo
+
+# 4. Native Android / iOS generated build folders
+android/
+ios/
+.kotlin/
+*.jks
+*.p8
+*.p12
+*.key
+*.keystore
+*.mobileprovision
+*.apk
+*.aab
+
+# 5. OCR Models, Caches & Uploads (Auto-downloaded at runtime)
+*.traineddata
+*/ocr-uploads/
+ocr-uploads/
+uploads/
+tmp/
+
+# 6. Logs & Diagnostics
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.metro-health-check*
+
+# 7. OS & Editor Artifacts
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+

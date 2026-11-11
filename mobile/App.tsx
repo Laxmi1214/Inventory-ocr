@@ -5,6 +5,10 @@ import LoginScreen from './src/screens/LoginScreen';
 import SignupScreen from './src/screens/SignupScreen';
 import DashboardScreen, { UserSession } from './src/screens/DashboardScreen';
 import TaskDetailScreen, { TaskInfo } from './src/screens/TaskDetailScreen';
+import ReceivingPOScreen from './src/screens/ReceivingPOScreen';
+import ScannerScreen from './src/screens/ScannerScreen';
+import { InboundShipmentWithItems } from './src/services/receiving';
+import { ExtractedLabelData } from './src/services/ocr';
 import {
   getActiveSessionUser,
   logoutUser,
@@ -18,6 +22,7 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'login' | 'signup'>('login');
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [selectedTaskType, setSelectedTaskType] = useState<string | null>(null);
+  const [selectedShipment, setSelectedShipment] = useState<InboundShipmentWithItems | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -93,7 +98,24 @@ export default function App() {
     }
     setCurrentUser(null);
     setSelectedTaskType(null);
+    setSelectedShipment(null);
     setCurrentScreen('login');
+  };
+
+  const handleProceedToValidate = (
+    extractedData: ExtractedLabelData,
+    shipment: InboundShipmentWithItems
+  ) => {
+    Alert.alert(
+      'Ready for Validation (Step 4)',
+      `Data Captured via ${extractedData.source}:\n` +
+        `• PO: ${shipment.poNumber}\n` +
+        `• Product: ${extractedData.productName || shipment.items[0]?.product?.name || 'N/A'}\n` +
+        `• Batch: ${extractedData.batchNumber || 'N/A'}\n` +
+        `• Expiry: ${extractedData.expiryDate || 'N/A'}\n` +
+        `• Barcode: ${extractedData.barcode || 'N/A'}\n\n` +
+        `(Step 4 will validate these fields against PO requirements and commit to Supabase).`
+    );
   };
 
   const handleStartScan = (task: TaskInfo) => {
@@ -116,7 +138,22 @@ export default function App() {
     <View style={styles.container}>
       <StatusBar style="light" />
       {currentUser ? (
-        selectedTaskType ? (
+        selectedTaskType === 'RECEIVING' ? (
+          selectedShipment ? (
+            <ScannerScreen
+              shipment={selectedShipment}
+              onBack={() => setSelectedShipment(null)}
+              onProceedToValidate={handleProceedToValidate}
+            />
+          ) : (
+            <ReceivingPOScreen
+              onBack={() => setSelectedTaskType(null)}
+              onSelectPO={(shipment: InboundShipmentWithItems) => {
+                setSelectedShipment(shipment);
+              }}
+            />
+          )
+        ) : selectedTaskType ? (
           <TaskDetailScreen
             taskType={selectedTaskType}
             onBack={() => setSelectedTaskType(null)}

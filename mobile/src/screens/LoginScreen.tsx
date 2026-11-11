@@ -60,19 +60,19 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
     }
   };
 
-  const handleDemoFill = (role: 'OPERATOR' | 'SUPERVISOR' | 'SYSTEM_ADMIN') => {
-    if (role === 'OPERATOR') {
-      setEmailOrUsername('operator@congiotech.com');
-      setPassword('password123');
-    } else if (role === 'SUPERVISOR') {
-      setEmailOrUsername('supervisor@congiotech.com');
-      setPassword('password123');
-    } else {
-      setEmailOrUsername('admin@congiotech.com');
-      setPassword('adminpassword');
-    }
-    setErrorMessage('');
-  };
+  // const handleDemoFill = (role: 'OPERATOR' | 'SUPERVISOR' | 'SYSTEM_ADMIN') => {
+  //   if (role === 'OPERATOR') {
+  //     setEmailOrUsername('operator@congiotech.com');
+  //     setPassword('password123');
+  //   } else if (role === 'SUPERVISOR') {
+  //     setEmailOrUsername('supervisor@congiotech.com');
+  //     setPassword('password123');
+  //   } else {
+  //     setEmailOrUsername('admin@congiotech.com');
+  //     setPassword('adminpassword');
+  //   }
+  //   setErrorMessage('');
+  // };
 
   return (
     <KeyboardAvoidingView
@@ -96,7 +96,6 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
         {/* Card */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Staff Sign In</Text>
-          <Text style={styles.cardSubtitle}>Authenticate with your database credentials</Text>
 
           {/* <View style={styles.dbBadge}>
             <Ionicons name="server-outline" size={14} color="#0284C7" />

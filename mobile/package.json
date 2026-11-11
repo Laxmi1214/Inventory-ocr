@@ -29,7 +29,9 @@
     "web": "expo start --web",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "node src/db/seed_receiving.js",
+    "ocr": "node ../ocr-server/server.js"
   },
   "private": true
 }
