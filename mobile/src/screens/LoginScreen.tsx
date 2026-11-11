@@ -161,7 +161,7 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
           </View>
 
           {/* Demo helper shortcuts */}
-          <View style={styles.quickFillContainer}>
+          {/* <View style={styles.quickFillContainer}>
             <Text style={styles.quickFillLabel}>Quick Test Accounts:</Text>
             <View style={styles.quickFillPills}>
               <TouchableOpacity
@@ -183,7 +183,7 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
                 <Text style={styles.quickFillPillText}>Admin</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </View> */}
 
           {/* Sign In Button */}
           <TouchableOpacity
