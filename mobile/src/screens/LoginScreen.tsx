@@ -98,10 +98,10 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
           <Text style={styles.cardTitle}>Staff Sign In</Text>
           <Text style={styles.cardSubtitle}>Authenticate with your database credentials</Text>
 
-          <View style={styles.dbBadge}>
+          {/* <View style={styles.dbBadge}>
             <Ionicons name="server-outline" size={14} color="#0284C7" />
-            {/* <Text style={styles.dbBadgeText}>Database Authentication Active</Text> */}
-          </View>
+            <Text style={styles.dbBadgeText}>Database Authentication Active</Text>
+          </View> */}
 
           {errorMessage ? (
             <View style={styles.errorBanner}>
