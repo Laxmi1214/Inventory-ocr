@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, ActivityIndicator, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import LoginScreen from './src/screens/LoginScreen';
 import SignupScreen from './src/screens/SignupScreen';
 import DashboardScreen, { UserSession } from './src/screens/DashboardScreen';
+import TaskDetailScreen, { TaskInfo } from './src/screens/TaskDetailScreen';
 import {
   getActiveSessionUser,
   logoutUser,
@@ -16,6 +17,7 @@ import {
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'login' | 'signup'>('login');
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
+  const [selectedTaskType, setSelectedTaskType] = useState<string | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -52,6 +54,7 @@ export default function App() {
             } else if (event === 'SIGNED_OUT') {
               if (isMounted) {
                 setCurrentUser(null);
+                setSelectedTaskType(null);
                 setCurrentScreen('login');
               }
             }
@@ -79,6 +82,7 @@ export default function App() {
 
   const handleLoginSuccess = (user: UserSession) => {
     setCurrentUser(user);
+    setSelectedTaskType(null);
   };
 
   const handleLogout = async () => {
@@ -88,7 +92,15 @@ export default function App() {
       console.warn('Logout error:', e);
     }
     setCurrentUser(null);
+    setSelectedTaskType(null);
     setCurrentScreen('login');
+  };
+
+  const handleStartScan = (task: TaskInfo) => {
+    Alert.alert(
+      'Barcode / OCR Scanner',
+      `Ready to scan for:\n${task.title}\nProduct: ${task.expectedItem}\nSKU: ${task.expectedSku}\nTarget Batch: ${task.expectedBatch || 'N/A'}`
+    );
   };
 
   if (isCheckingAuth) {
@@ -104,7 +116,19 @@ export default function App() {
     <View style={styles.container}>
       <StatusBar style="light" />
       {currentUser ? (
-        <DashboardScreen user={currentUser} onLogout={handleLogout} />
+        selectedTaskType ? (
+          <TaskDetailScreen
+            taskType={selectedTaskType}
+            onBack={() => setSelectedTaskType(null)}
+            onStartScan={handleStartScan}
+          />
+        ) : (
+          <DashboardScreen
+            user={currentUser}
+            onLogout={handleLogout}
+            onSelectTask={(taskId) => setSelectedTaskType(taskId)}
+          />
+        )
       ) : currentScreen === 'login' ? (
         <LoginScreen
           onNavigateToSignup={() => setCurrentScreen('signup')}
