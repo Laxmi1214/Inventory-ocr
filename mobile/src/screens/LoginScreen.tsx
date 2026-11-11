@@ -12,11 +12,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { loginStaffUser, isSupabaseConfigured, AuthUserProfile } from '../services/supabase';
+import { loginUser, UserSession } from '../services/db';
 
 interface LoginScreenProps {
   onNavigateToSignup: () => void;
-  onLoginSuccess?: (userData: AuthUserProfile) => void;
+  onLoginSuccess?: (userData: UserSession) => void;
 }
 
 export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: LoginScreenProps) {
@@ -30,7 +30,7 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
     setErrorMessage('');
 
     if (!emailOrUsername.trim()) {
-      setErrorMessage('Please enter your email address');
+      setErrorMessage('Please enter your email or user name');
       return;
     }
 
@@ -41,44 +41,37 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
 
     setIsLoading(true);
 
-    if (!isSupabaseConfigured) {
-      // Offline / Pre-configuration fallback
-      setTimeout(() => {
-        setIsLoading(false);
-        Alert.alert(
-          'Supabase Keys Pending',
-          'Please set your EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in mobile/.env to authenticate against your live database.\n\nProceeding in local demo mode.',
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                if (onLoginSuccess) {
-                  onLoginSuccess({
-                    id: 'demo-user-id',
-                    email: emailOrUsername.trim(),
-                    fullName: emailOrUsername.split('@')[0],
-                    role: 'OPERATOR',
-                  });
-                }
-              },
-            },
-          ]
-        );
-      }, 600);
-      return;
-    }
+    try {
+      // Query DB user table and compare credentials
+      const { user, error } = await loginUser(emailOrUsername, password);
+      setIsLoading(false);
 
-    const { user, error } = await loginStaffUser(emailOrUsername, password);
-    setIsLoading(false);
+      if (error) {
+        setErrorMessage(error);
+        return;
+      }
 
-    if (error) {
-      setErrorMessage(error);
-      return;
+      if (user && onLoginSuccess) {
+        onLoginSuccess(user);
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      setErrorMessage(err?.message || 'Failed to authenticate against database');
     }
+  };
 
-    if (user && onLoginSuccess) {
-      onLoginSuccess(user);
+  const handleDemoFill = (role: 'OPERATOR' | 'SUPERVISOR' | 'SYSTEM_ADMIN') => {
+    if (role === 'OPERATOR') {
+      setEmailOrUsername('operator@congiotech.com');
+      setPassword('password123');
+    } else if (role === 'SUPERVISOR') {
+      setEmailOrUsername('supervisor@congiotech.com');
+      setPassword('password123');
+    } else {
+      setEmailOrUsername('admin@congiotech.com');
+      setPassword('adminpassword');
     }
+    setErrorMessage('');
   };
 
   return (
@@ -102,17 +95,13 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
 
         {/* Card */}
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Welcome Back</Text>
-          <Text style={styles.cardSubtitle}>Sign in with your registered staff account</Text>
+          <Text style={styles.cardTitle}>Staff Sign In</Text>
+          <Text style={styles.cardSubtitle}>Authenticate with your database credentials</Text>
 
-          {!isSupabaseConfigured && (
-            <View style={styles.infoBanner}>
-              <Ionicons name="information-circle-outline" size={18} color="#38BDF8" />
-              <Text style={styles.infoBannerText}>
-                Supabase credentials pending in mobile/.env (Running in local mode)
-              </Text>
-            </View>
-          )}
+          <View style={styles.dbBadge}>
+            <Ionicons name="server-outline" size={14} color="#0284C7" />
+            <Text style={styles.dbBadgeText}>Database Authentication Active</Text>
+          </View>
 
           {errorMessage ? (
             <View style={styles.errorBanner}>
@@ -123,12 +112,12 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
 
           {/* Email / Username Input */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Staff Email</Text>
+            <Text style={styles.label}>Email ID / User Name</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="operator@congiotech.com"
+                placeholder="staff@congiotech.com"
                 placeholderTextColor="#94A3B8"
                 autoCapitalize="none"
                 keyboardType="email-address"
@@ -143,12 +132,12 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
 
           {/* Password Input */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
+            <Text style={styles.label}>Password (PW)</Text>
             <View style={styles.inputWrapper}>
               <Ionicons name="lock-closed-outline" size={20} color="#64748B" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="Enter your password"
+                placeholder="Enter password"
                 placeholderTextColor="#94A3B8"
                 secureTextEntry={!showPassword}
                 value={password}
@@ -171,15 +160,30 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
             </View>
           </View>
 
-          {/* Forgot Password Link */}
-          <TouchableOpacity
-            style={styles.forgotPasswordContainer}
-            onPress={() =>
-              Alert.alert('Forgot Password', 'Please contact your System Administrator to reset your password.')
-            }
-          >
-            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
-          </TouchableOpacity>
+          {/* Demo helper shortcuts */}
+          <View style={styles.quickFillContainer}>
+            <Text style={styles.quickFillLabel}>Quick Test Accounts:</Text>
+            <View style={styles.quickFillPills}>
+              <TouchableOpacity
+                style={styles.quickFillPill}
+                onPress={() => handleDemoFill('OPERATOR')}
+              >
+                <Text style={styles.quickFillPillText}>Operator</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.quickFillPill}
+                onPress={() => handleDemoFill('SUPERVISOR')}
+              >
+                <Text style={styles.quickFillPillText}>Supervisor</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.quickFillPill}
+                onPress={() => handleDemoFill('SYSTEM_ADMIN')}
+              >
+                <Text style={styles.quickFillPillText}>Admin</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
 
           {/* Sign In Button */}
           <TouchableOpacity
@@ -202,7 +206,7 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
           <View style={styles.switchAuthContainer}>
             <Text style={styles.switchAuthText}>New warehouse staff? </Text>
             <TouchableOpacity onPress={onNavigateToSignup} activeOpacity={0.7}>
-              <Text style={styles.switchAuthHighlight}>Create an Account</Text>
+              <Text style={styles.switchAuthHighlight}>Register User</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -252,20 +256,19 @@ const styles = StyleSheet.create({
   brandSubtitle: {
     fontSize: 13,
     color: '#94A3B8',
-    marginTop: 4,
-    fontWeight: '500',
+    marginTop: 2,
   },
   card: {
     backgroundColor: '#1E293B',
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: 16,
+    padding: 22,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 5,
     borderWidth: 1,
     borderColor: '#334155',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
   },
   cardTitle: {
     fontSize: 20,
@@ -276,41 +279,42 @@ const styles = StyleSheet.create({
   cardSubtitle: {
     fontSize: 13,
     color: '#94A3B8',
-    marginBottom: 16,
+    marginBottom: 14,
   },
-  infoBanner: {
+  dbBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.25)',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    backgroundColor: 'rgba(2, 132, 199, 0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(2, 132, 199, 0.25)',
   },
-  infoBannerText: {
+  dbBadgeText: {
     color: '#38BDF8',
     fontSize: 12,
-    marginLeft: 8,
-    flex: 1,
+    fontWeight: '600',
+    marginLeft: 6,
   },
   errorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#FCA5A5',
-    borderRadius: 10,
+    backgroundColor: 'rgba(220, 38, 38, 0.15)',
+    borderLeftWidth: 3,
+    borderLeftColor: '#DC2626',
+    borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     marginBottom: 16,
   },
   errorBannerText: {
-    color: '#B91C1C',
+    color: '#FCA5A5',
     fontSize: 13,
     marginLeft: 8,
     flex: 1,
+    fontWeight: '600',
   },
   inputGroup: {
     marginBottom: 16,
@@ -318,45 +322,70 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#CBD5E1',
+    color: '#E2E8F0',
     marginBottom: 6,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#0F172A',
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#334155',
     paddingHorizontal: 12,
     height: 48,
   },
   inputIcon: {
-    marginRight: 8,
+    marginRight: 10,
   },
   input: {
     flex: 1,
     color: '#F8FAFC',
-    fontSize: 14,
+    fontSize: 15,
   },
   eyeButton: {
     padding: 6,
   },
-  forgotPasswordContainer: {
-    alignSelf: 'flex-end',
-    marginBottom: 20,
+  quickFillContainer: {
+    marginBottom: 16,
+    backgroundColor: '#0F172A',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  forgotPasswordText: {
+  quickFillLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#94A3B8',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  quickFillPills: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  quickFillPill: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  quickFillPillText: {
     color: '#38BDF8',
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
   },
   primaryButton: {
     backgroundColor: '#0284C7',
-    borderRadius: 12,
-    height: 48,
+    borderRadius: 10,
+    height: 50,
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 4,
     shadowColor: '#0284C7',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
@@ -372,32 +401,32 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
   },
   switchAuthContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 18,
   },
   switchAuthText: {
     color: '#94A3B8',
-    fontSize: 13,
+    fontSize: 14,
   },
   switchAuthHighlight: {
     color: '#38BDF8',
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
   },
   footerNoteContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 24,
   },
   footerNoteText: {
-    color: '#64748B',
     fontSize: 12,
+    color: '#94A3B8',
   },
 });

@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, varchar } from 'drizzle-orm/pg-core';
 
 /**
  * Roles table - Predefined roles in Congiotech Inventory system
@@ -12,13 +12,14 @@ export const roles = pgTable('roles', {
 });
 
 /**
- * Users profile table
- * Connected to Supabase auth.users via UUID primary key
+ * Users table
+ * Stores user profile, credentials (pw), and assigned role
  */
 export const users = pgTable('users', {
-  id: uuid('id').primaryKey(), // maps to supabase auth.users.id
-  email: varchar('email', { length: 255 }).notNull().unique(),
-  fullName: varchar('full_name', { length: 255 }).notNull(),
+  id: varchar('id', { length: 100 }).primaryKey(), // Unique User ID (e.g. USER-xxxx or UUID)
+  username: varchar('username', { length: 100 }).notNull(), // User Name
+  email: varchar('email', { length: 255 }).notNull().unique(), // User Email (unique)
+  password: text('password').notNull(), // Password / PW
   role: varchar('role', { length: 50 })
     .notNull()
     .default('OPERATOR')
@@ -32,4 +33,3 @@ export type NewRole = typeof roles.$inferInsert;
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
-

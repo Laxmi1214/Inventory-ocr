@@ -6,10 +6,11 @@ import SignupScreen from './src/screens/SignupScreen';
 import DashboardScreen, { UserSession } from './src/screens/DashboardScreen';
 import {
   getActiveSessionUser,
-  logoutStaffUser,
+  logoutUser,
+} from './src/services/db';
+import {
   supabase,
   isSupabaseConfigured,
-  AuthUserProfile,
 } from './src/services/supabase';
 
 export default function App() {
@@ -17,17 +18,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
-  // Check for existing active session in Supabase when app loads
+  // Check for existing active database session when app loads
   useEffect(() => {
     let isMounted = true;
 
     async function checkAuthSession() {
       try {
-        if (isSupabaseConfigured) {
-          const user = await getActiveSessionUser();
-          if (isMounted && user) {
-            setCurrentUser(user);
-          }
+        const user = await getActiveSessionUser();
+        if (isMounted && user) {
+          setCurrentUser(user);
         }
       } catch (err) {
         console.warn('Session check error:', err);
@@ -40,7 +39,7 @@ export default function App() {
 
     checkAuthSession();
 
-    // Listen to real-time auth changes safely
+    // Listen to real-time auth changes if Supabase is configured
     if (isSupabaseConfigured) {
       let authSub: any = null;
       try {
@@ -71,8 +70,6 @@ export default function App() {
           authSub.unsubscribe();
         }
       };
-    } else {
-      setIsCheckingAuth(false);
     }
 
     return () => {
@@ -80,13 +77,13 @@ export default function App() {
     };
   }, []);
 
-  const handleLoginSuccess = (user: AuthUserProfile | UserSession) => {
+  const handleLoginSuccess = (user: UserSession) => {
     setCurrentUser(user);
   };
 
   const handleLogout = async () => {
     try {
-      await logoutStaffUser();
+      await logoutUser();
     } catch (e) {
       console.warn('Logout error:', e);
     }

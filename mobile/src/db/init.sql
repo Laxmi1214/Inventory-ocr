@@ -1,6 +1,6 @@
 -- ==============================================================================
 -- CONGIOTECH PHARMACEUTICAL INVENTORY - DATABASE INITIALIZATION
--- Supabase PostgreSQL + Drizzle ORM Schema
+-- User Table & Roles Schema for Login and Signup
 -- ==============================================================================
 
 -- 1. Create Roles Table
@@ -20,42 +20,40 @@ VALUES
     ('SYSTEM_ADMIN', 'System Administrator', 'Manage users, roles, devices, and application settings')
 ON CONFLICT (id) DO NOTHING;
 
--- 2. Create Users (Staff Profiles) Table
+-- 2. Create Users Table
 CREATE TABLE IF NOT EXISTS public.users (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    id VARCHAR(100) PRIMARY KEY,
+    username VARCHAR(100) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
-    full_name VARCHAR(255) NOT NULL,
+    password TEXT NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'OPERATOR' REFERENCES public.roles(id),
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
 
+-- Index on email for fast login lookup
+CREATE INDEX IF NOT EXISTS idx_users_email ON public.users (LOWER(email));
+
 -- 3. Enable Row Level Security (RLS)
 ALTER TABLE public.roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
--- Allow authenticated users to view roles
-CREATE POLICY "Allow authenticated read on roles" 
+-- Allow public / authenticated access policies
+CREATE POLICY "Allow public read on roles" 
 ON public.roles FOR SELECT 
-TO authenticated 
 USING (true);
 
--- Allow users to read their own profile
-CREATE POLICY "Allow users to read own profile" 
+CREATE POLICY "Allow public read on users for auth" 
 ON public.users FOR SELECT 
-TO authenticated 
-USING (auth.uid() = id);
+USING (true);
 
--- Allow users to insert/update their own profile
-CREATE POLICY "Allow users to insert own profile" 
+CREATE POLICY "Allow user registration insert" 
 ON public.users FOR INSERT 
-TO authenticated 
-WITH CHECK (auth.uid() = id);
+WITH CHECK (true);
 
-CREATE POLICY "Allow users to update own profile" 
+CREATE POLICY "Allow user update" 
 ON public.users FOR UPDATE 
-TO authenticated 
-USING (auth.uid() = id);
+USING (true);
 
 -- Trigger to automatically update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -71,4 +69,3 @@ CREATE TRIGGER update_users_updated_at
     BEFORE UPDATE ON public.users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
-
