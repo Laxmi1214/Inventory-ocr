@@ -1,10 +1,10 @@
 /**
- * OCR and Barcode / QR Service
- * Handles live barcode & QR decoding, GS1 pharma parsing, and live OCR label extraction
+ * Barcode & QR Code Scanning Service
+ * Handles live 1D/2D barcode & QR decoding, GS1 pharma parsing, and structured field extraction
  */
 
 export interface ExtractedLabelData {
-  source: 'BARCODE' | 'QR_CODE' | 'PADDLE_OCR' | 'MANUAL';
+  source: 'BARCODE' | 'QR_CODE' | 'MANUAL';
   barcode?: string;
   barcodeType?: string;
   productName?: string;
@@ -16,10 +16,6 @@ export interface ExtractedLabelData {
   confidence?: number;
   rawText?: string;
 }
-
-// Configurable OCR backend endpoint pointing to our active OCR server on LAN
-export const OCR_API_URL =
-  process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8000/api/ocr/extract';
 
 /**
  * Decodes barcode or QR code string and extracts structured fields
@@ -143,76 +139,4 @@ export function decodePharmaBarcode(rawCode: string, codeType?: string): Extract
     confidence: 1.0,
     rawText: cleanCode,
   };
-}
-
-/**
- * Sends captured medicine label image to live OCR server
- * Runs real optical character recognition on the photo and parses medicine fields
- */
-export async function extractLabelWithPaddleOCR(
-  photoUri: string,
-  base64Data?: string,
-  expectedItemHint?: { name: string; sku: string; batch?: string }
-): Promise<ExtractedLabelData> {
-  console.log(`[OCR Client] Connecting to OCR server at ${OCR_API_URL}...`);
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
-
-    let response: Response;
-
-    if (base64Data) {
-      response = await fetch(OCR_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ image_base64: base64Data }),
-        signal: controller.signal,
-      });
-    } else {
-      const formData = new FormData();
-      formData.append('file', {
-        uri: photoUri,
-        type: 'image/jpeg',
-        name: 'captured_label.jpg',
-      } as any);
-
-      response = await fetch(OCR_API_URL, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      });
-    }
-
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      const json = await response.json();
-      console.log('[OCR Client] Server returned extracted data:', json);
-
-      return {
-        source: 'PADDLE_OCR',
-        productName: json.product_name || 'Medicine Label',
-        sku: json.sku,
-        batchNumber: json.batch_number,
-        mfgDate: json.mfg_date,
-        expiryDate: json.expiry_date,
-        confidence: parseFloat(json.confidence) || 0.85,
-        rawText: json.raw_text,
-      };
-    } else {
-      const errText = await response.text();
-      console.warn('[OCR Client] Server error status:', response.status, errText);
-    }
-  } catch (err: any) {
-    console.warn('[OCR Client] Connection error to OCR server:', err?.message || err);
-  }
-
-  // If OCR server is unreachable on Wi-Fi, inform the user clearly
-  throw new Error(
-    `Cannot connect to OCR server at ${OCR_API_URL}. Please verify your phone and computer are on the same Wi-Fi network.`
-  );
 }

@@ -1,16 +1,13 @@
 import React, { useState, useRef } from 'react';
 import {
-  StyleSheet,
-  Text,
   View,
+  Text,
+  StyleSheet,
   TouchableOpacity,
-  SafeAreaView,
-  Platform,
-  StatusBar as NativeStatusBar,
-  ActivityIndicator,
   Modal,
   TextInput,
   Alert,
+  SafeAreaView,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -18,7 +15,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { InboundShipmentWithItems } from '../services/receiving';
 import {
   decodePharmaBarcode,
-  extractLabelWithPaddleOCR,
   ExtractedLabelData,
 } from '../services/ocr';
 
@@ -38,95 +34,55 @@ export default function ScannerScreen({
 
   const [isTorchOn, setIsTorchOn] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
-  const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const [scanResult, setScanResult] = useState<ExtractedLabelData | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualCode, setManualCode] = useState('');
 
-  // Primary expected medicine in this PO to assist OCR parsing
+  // Primary expected medicine in this PO
   const primaryItem = shipment.items[0]?.product;
-  const primaryBatch = shipment.items[0]?.expectedBatch;
 
   // 1. Live Barcode & QR Code Scanning Handler
   const handleBarcodeScanned = ({ data, type }: { data: string; type: string }) => {
-    if (showResultModal || isProcessingOCR) return;
+    if (showResultModal) return;
 
     const decoded = decodePharmaBarcode(data, type);
     setScanResult(decoded);
     setShowResultModal(true);
   };
 
-  // 2. PaddleOCR Label Capture Handler
-  const handleCaptureLabel = async () => {
-    if (isProcessingOCR) return;
-
-    try {
-      setIsProcessingOCR(true);
-
-      let photoUri = '';
-      let base64 = '';
-
-      if (cameraRef.current) {
-        try {
-          const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.6,
-            base64: true,
-          });
-          if (photo?.uri) {
-            photoUri = photo.uri;
-            base64 = photo.base64 || '';
-          }
-        } catch (captureErr) {
-          console.warn('Native camera capture warning:', captureErr);
-        }
-      }
-
-      // Send to PaddleOCR extraction service
-      const extracted = await extractLabelWithPaddleOCR(photoUri, base64, {
-        name: primaryItem?.name || 'Paracetamol 500mg Tablets',
-        sku: primaryItem?.sku || 'MED-PARA-500',
-        batch: primaryBatch || 'BATCH123',
-      });
-
-      setScanResult(extracted);
-      setShowResultModal(true);
-    } catch (err: any) {
-      Alert.alert('OCR Error', err?.message || 'Failed to extract text from label.');
-    } finally {
-      setIsProcessingOCR(false);
-    }
-  };
-
-  // 3. Manual Entry Submit Handler
+  // 2. Manual Barcode Entry Fallback Handler
   const handleManualSubmit = () => {
     if (!manualCode.trim()) {
       Alert.alert('Input Required', 'Please enter a barcode number or product SKU.');
       return;
     }
 
+    const decoded = decodePharmaBarcode(manualCode.trim(), 'manual');
+    decoded.source = 'MANUAL';
+
+    // If matches expected PO product, attach known details
+    if (primaryItem && (primaryItem.sku.toLowerCase() === manualCode.trim().toLowerCase() || primaryItem.barcode === manualCode.trim())) {
+      decoded.productName = primaryItem.name;
+      decoded.sku = primaryItem.sku;
+      decoded.batchNumber = shipment.items[0]?.expectedBatch;
+    }
+
+    setScanResult(decoded);
     setShowManualModal(false);
-    const manualData: ExtractedLabelData = {
-      source: 'MANUAL',
-      barcode: manualCode.trim(),
-      barcodeType: 'MANUAL_ENTRY',
-      confidence: 1.0,
-    };
-    setScanResult(manualData);
+    setManualCode('');
     setShowResultModal(true);
   };
 
-  // 4. Reset & Scan Again
+  // 3. Reset Scanner for Next Scan
   const handleScanAgain = () => {
     setShowResultModal(false);
     setScanResult(null);
   };
 
-  // Permission handling view
   if (!permission) {
     return (
       <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color="#38BDF8" />
         <Text style={styles.permissionText}>Checking camera permissions...</Text>
       </View>
     );
@@ -141,7 +97,7 @@ export default function ScannerScreen({
           </View>
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionDesc}>
-            Congiotech Inventory needs camera access to scan pharmaceutical barcodes and capture medicine labels for PaddleOCR verification.
+            Congiotech Inventory needs camera access to scan pharmaceutical barcodes and QR codes for goods reception.
           </Text>
           <TouchableOpacity style={styles.permissionButton} onPress={requestPermission} activeOpacity={0.8}>
             <Text style={styles.permissionButtonText}>Grant Camera Permission</Text>
@@ -158,18 +114,17 @@ export default function ScannerScreen({
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Live Camera View */}
+      {/* Live Camera View for Barcode & QR Scanning */}
       <CameraView
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
         facing="back"
-        mode="picture"
         enableTorch={isTorchOn}
         onCameraReady={() => setIsCameraReady(true)}
         barcodeScannerSettings={{
           barcodeTypes: ['qr', 'code128', 'code39', 'ean13', 'ean8', 'datamatrix'],
         }}
-        onBarcodeScanned={showResultModal || isProcessingOCR ? undefined : handleBarcodeScanned}
+        onBarcodeScanned={showResultModal ? undefined : handleBarcodeScanned}
       />
 
       {/* Viewfinder Overlay */}
@@ -207,11 +162,11 @@ export default function ScannerScreen({
             <View style={styles.laserLine} />
           </View>
           <Text style={styles.reticleInstruction}>
-            Position Barcode, QR Code, or Medicine Label inside frame
+            Position Barcode or QR Code inside frame
           </Text>
         </View>
 
-        {/* Bottom Bar: PaddleOCR Shutter & Manual Entry */}
+        {/* Bottom Bar: Manual Entry & Scanner Status */}
         <View style={styles.bottomBar}>
           <TouchableOpacity
             style={styles.manualEntryBtn}
@@ -222,40 +177,15 @@ export default function ScannerScreen({
             <Text style={styles.manualEntryText}>Manual Entry</Text>
           </TouchableOpacity>
 
-          {/* PaddleOCR Capture Shutter Button */}
-          <TouchableOpacity
-            style={[styles.ocrCaptureButton, isProcessingOCR && styles.buttonDisabled]}
-            onPress={handleCaptureLabel}
-            disabled={isProcessingOCR}
-            activeOpacity={0.85}
-          >
-            <View style={styles.ocrCaptureInner}>
-              <Ionicons name="camera" size={28} color="#FFFFFF" />
-            </View>
-          </TouchableOpacity>
-
           <View style={styles.modeIndicator}>
             <View style={styles.liveDot} />
             <Text style={styles.modeText}>Barcode / QR</Text>
-            <Text style={styles.modeTextSub}>Tap for OCR</Text>
+            <Text style={styles.modeTextSub}>Auto-Detect Active</Text>
           </View>
         </View>
       </SafeAreaView>
 
-      {/* OCR Loading Overlay */}
-      {isProcessingOCR && (
-        <View style={styles.loadingOverlay}>
-          <View style={styles.loadingCard}>
-            <ActivityIndicator size="large" color="#38BDF8" />
-            <Text style={styles.ocrLoadingTitle}>Processing Label with PaddleOCR</Text>
-            <Text style={styles.ocrLoadingDesc}>
-              Detecting text fields, product name, batch number & expiry date...
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* Scan / Extraction Result Modal */}
+      {/* Scan Result Modal */}
       <Modal
         visible={showResultModal}
         transparent
@@ -271,53 +201,34 @@ export default function ScannerScreen({
                     styles.sourceTag,
                     {
                       backgroundColor:
-                        scanResult?.source === 'PADDLE_OCR'
-                          ? 'rgba(139, 92, 246, 0.15)'
-                          : scanResult?.source === 'QR_CODE'
+                        scanResult?.source === 'QR_CODE'
                           ? 'rgba(16, 185, 129, 0.15)'
                           : 'rgba(56, 189, 248, 0.15)',
                     },
                   ]}
                 >
                   <Ionicons
-                    name={
-                      scanResult?.source === 'PADDLE_OCR'
-                        ? 'text-outline'
-                        : scanResult?.source === 'QR_CODE'
-                        ? 'qr-code-outline'
-                        : 'barcode-outline'
-                    }
+                    name={scanResult?.source === 'QR_CODE' ? 'qr-code-outline' : 'barcode-outline'}
                     size={14}
-                    color={
-                      scanResult?.source === 'PADDLE_OCR'
-                        ? '#A78BFA'
-                        : scanResult?.source === 'QR_CODE'
-                        ? '#10B981'
-                        : '#38BDF8'
-                    }
+                    color={scanResult?.source === 'QR_CODE' ? '#10B981' : '#38BDF8'}
                     style={{ marginRight: 4 }}
                   />
                   <Text
                     style={[
                       styles.sourceTagText,
                       {
-                        color:
-                          scanResult?.source === 'PADDLE_OCR'
-                            ? '#A78BFA'
-                            : scanResult?.source === 'QR_CODE'
-                            ? '#10B981'
-                            : '#38BDF8',
+                        color: scanResult?.source === 'QR_CODE' ? '#10B981' : '#38BDF8',
                       },
                     ]}
                   >
-                    {scanResult?.source === 'PADDLE_OCR'
-                      ? 'PaddleOCR Extracted'
-                      : scanResult?.source === 'QR_CODE'
+                    {scanResult?.source === 'QR_CODE'
                       ? scanResult.barcodeType || 'QR Code Captured'
+                      : scanResult?.source === 'MANUAL'
+                      ? 'Manual Entry'
                       : 'Barcode Captured'}
                   </Text>
                 </View>
-                <Text style={styles.modalTitle}>Recognition Result</Text>
+                <Text style={styles.modalTitle}>Scan Result</Text>
               </View>
 
               {scanResult?.confidence && (
@@ -340,7 +251,7 @@ export default function ScannerScreen({
 
               {scanResult?.barcode ? (
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Barcode / GTIN:</Text>
+                  <Text style={styles.detailLabel}>Barcode / Code:</Text>
                   <Text style={styles.detailValue}>{scanResult.barcode}</Text>
                 </View>
               ) : null}
@@ -411,7 +322,7 @@ export default function ScannerScreen({
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Manual Identifier Entry</Text>
             <Text style={styles.modalSubtitle}>
-              If label is damaged or unreadable by camera, enter Barcode / SKU manually.
+              If barcode is damaged or unreadable, enter Barcode / SKU manually.
             </Text>
 
             <TextInput
@@ -420,13 +331,40 @@ export default function ScannerScreen({
               placeholderTextColor="#64748B"
               value={manualCode}
               onChangeText={setManualCode}
+              autoCapitalize="characters"
               autoFocus
             />
+
+            {/* Quick Pick from Expected Items in PO */}
+            {shipment.items.length > 0 && (
+              <View style={styles.quickPickSection}>
+                <Text style={styles.quickPickLabel}>Expected in this PO:</Text>
+                {shipment.items.map((item) => {
+                  const prod = item.product;
+                  if (!prod) return null;
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.quickPickItem}
+                      onPress={() => setManualCode(prod.sku)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="medical" size={14} color="#38BDF8" style={{ marginRight: 6 }} />
+                      <Text style={styles.quickPickItemName}>{prod.name}</Text>
+                      <Text style={styles.quickPickItemSku}>({prod.sku})</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
 
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={styles.retakeButton}
-                onPress={() => setShowManualModal(false)}
+                onPress={() => {
+                  setShowManualModal(false);
+                  setManualCode('');
+                }}
                 activeOpacity={0.7}
               >
                 <Text style={styles.retakeButtonText}>Cancel</Text>
@@ -450,23 +388,17 @@ export default function ScannerScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#0F172A',
   },
   centered: {
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
-    backgroundColor: '#0F172A',
-  },
-  permissionText: {
-    color: '#94A3B8',
-    fontSize: 14,
-    marginTop: 12,
   },
   permissionCard: {
     backgroundColor: '#1E293B',
-    borderRadius: 20,
-    padding: 24,
+    borderRadius: 24,
+    padding: 28,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#334155',
@@ -477,32 +409,32 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 20,
   },
   permissionTitle: {
-    fontSize: 19,
+    fontSize: 20,
     fontWeight: '800',
     color: '#F8FAFC',
-    marginBottom: 8,
+    marginBottom: 10,
     textAlign: 'center',
   },
   permissionDesc: {
-    fontSize: 13,
+    fontSize: 14,
     color: '#94A3B8',
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 20,
     marginBottom: 24,
   },
   permissionButton: {
     backgroundColor: '#0284C7',
-    borderRadius: 12,
-    height: 48,
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 14,
     width: '100%',
+    alignItems: 'center',
     marginBottom: 12,
   },
   permissionButtonText: {
@@ -511,23 +443,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   permissionCancelButton: {
-    paddingVertical: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
   },
   permissionCancelText: {
     color: '#94A3B8',
-    fontSize: 13,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  permissionText: {
+    color: '#94A3B8',
+    fontSize: 14,
   },
   overlayContainer: {
     flex: 1,
     justifyContent: 'space-between',
-    paddingTop: Platform.OS === 'android' ? NativeStatusBar.currentHeight : 0,
   },
   topBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
   },
   iconButton: {
     width: 44,
@@ -537,21 +474,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderColor: '#334155',
   },
   iconButtonActive: {
-    backgroundColor: '#F59E0B',
-    borderColor: '#F59E0B',
+    backgroundColor: '#0284C7',
+    borderColor: '#38BDF8',
   },
   poPill: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.3)',
+    borderColor: '#334155',
   },
   poPillText: {
     color: '#F8FAFC',
@@ -563,17 +500,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scanReticle: {
-    width: 280,
-    height: 280,
-    borderRadius: 20,
+    width: 270,
+    height: 270,
     position: 'relative',
     justifyContent: 'center',
     alignItems: 'center',
   },
   corner: {
     position: 'absolute',
-    width: 36,
-    height: 36,
+    width: 34,
+    height: 34,
     borderColor: '#38BDF8',
   },
   cornerTL: {
@@ -581,28 +517,28 @@ const styles = StyleSheet.create({
     left: 0,
     borderTopWidth: 4,
     borderLeftWidth: 4,
-    borderTopLeftRadius: 16,
+    borderTopLeftRadius: 14,
   },
   cornerTR: {
     top: 0,
     right: 0,
     borderTopWidth: 4,
     borderRightWidth: 4,
-    borderTopRightRadius: 16,
+    borderTopRightRadius: 14,
   },
   cornerBL: {
     bottom: 0,
     left: 0,
     borderBottomWidth: 4,
     borderLeftWidth: 4,
-    borderBottomLeftRadius: 16,
+    borderBottomLeftRadius: 14,
   },
   cornerBR: {
     bottom: 0,
     right: 0,
     borderBottomWidth: 4,
     borderRightWidth: 4,
-    borderBottomRightRadius: 16,
+    borderBottomRightRadius: 14,
   },
   laserLine: {
     width: '90%',
@@ -612,73 +548,50 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 8,
-    elevation: 6,
+    elevation: 4,
   },
   reticleInstruction: {
-    color: '#E2E8F0',
-    fontSize: 12,
-    fontWeight: '600',
+    color: '#CBD5E1',
+    fontSize: 13,
+    fontWeight: '500',
     marginTop: 20,
     textAlign: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 12,
-    overflow: 'hidden',
+    paddingHorizontal: 30,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   bottomBar: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
     paddingBottom: 28,
   },
   manualEntryBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 14,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#334155',
-    minWidth: 90,
   },
   manualEntryText: {
-    color: '#CBD5E1',
-    fontSize: 11,
+    color: '#F8FAFC',
+    fontSize: 13,
     fontWeight: '600',
-    marginTop: 4,
-  },
-  ocrCaptureButton: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  ocrCaptureInner: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    backgroundColor: '#0284C7',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  buttonDisabled: {
-    opacity: 0.5,
+    marginLeft: 8,
   },
   modeIndicator: {
     alignItems: 'center',
-    backgroundColor: 'rgba(15, 23, 42, 0.75)',
-    paddingHorizontal: 12,
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#334155',
-    minWidth: 90,
   },
   liveDot: {
     width: 8,
@@ -689,44 +602,13 @@ const styles = StyleSheet.create({
   },
   modeText: {
     color: '#F8FAFC',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
   },
   modeTextSub: {
     color: '#94A3B8',
     fontSize: 9,
     marginTop: 1,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  loadingCard: {
-    backgroundColor: '#1E293B',
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#334155',
-    width: '100%',
-    maxWidth: 320,
-  },
-  ocrLoadingTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#F8FAFC',
-    marginTop: 16,
-    textAlign: 'center',
-  },
-  ocrLoadingDesc: {
-    fontSize: 12,
-    color: '#94A3B8',
-    textAlign: 'center',
-    lineHeight: 16,
-    marginTop: 6,
   },
   modalBackdrop: {
     flex: 1,
@@ -812,18 +694,7 @@ const styles = StyleSheet.create({
   detailValueBold: {
     fontSize: 14,
     color: '#F8FAFC',
-    fontWeight: '700',
-  },
-  modalInput: {
-    backgroundColor: '#0F172A',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-    color: '#F8FAFC',
-    paddingHorizontal: 14,
-    height: 48,
-    fontSize: 14,
-    marginBottom: 20,
+    fontWeight: '800',
   },
   modalActions: {
     flexDirection: 'row',
@@ -831,37 +702,72 @@ const styles = StyleSheet.create({
   },
   retakeButton: {
     flex: 1,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: '#334155',
-    justifyContent: 'center',
-    alignItems: 'center',
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#334155',
+    paddingVertical: 14,
+    borderRadius: 14,
   },
   retakeButtonText: {
-    color: '#CBD5E1',
+    color: '#F8FAFC',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   validateButton: {
-    flex: 1.5,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#0284C7',
-    justifyContent: 'center',
-    alignItems: 'center',
+    flex: 2,
     flexDirection: 'row',
-    shadowColor: '#0284C7',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0284C7',
+    paddingVertical: 14,
+    borderRadius: 14,
   },
   validateButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
+    fontWeight: '700',
+  },
+  modalInput: {
+    backgroundColor: '#0F172A',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: '#F8FAFC',
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginBottom: 16,
+  },
+  quickPickSection: {
+    marginBottom: 16,
+  },
+  quickPickLabel: {
+    fontSize: 12,
+    color: '#94A3B8',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  quickPickItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#1E293B',
+  },
+  quickPickItemName: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  quickPickItemSku: {
+    color: '#38BDF8',
+    fontSize: 12,
     fontWeight: '700',
   },
 });
