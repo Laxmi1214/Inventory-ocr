@@ -9,6 +9,7 @@ import ReceivingPOScreen from './src/screens/ReceivingPOScreen';
 import ScannerScreen from './src/screens/ScannerScreen';
 import { InboundShipmentWithItems } from './src/services/receiving';
 import { ExtractedLabelData } from './src/services/ocr';
+import { recordMedicineMovement } from './src/services/inventoryService';
 import {
   getActiveSessionUser,
   logoutUser,
@@ -60,6 +61,7 @@ export default function App() {
               if (isMounted) {
                 setCurrentUser(null);
                 setSelectedTaskType(null);
+                setSelectedShipment(null);
                 setCurrentScreen('login');
               }
             }
@@ -88,6 +90,7 @@ export default function App() {
   const handleLoginSuccess = (user: UserSession) => {
     setCurrentUser(user);
     setSelectedTaskType(null);
+    setSelectedShipment(null);
   };
 
   const handleLogout = async () => {
@@ -102,25 +105,57 @@ export default function App() {
     setCurrentScreen('login');
   };
 
-  const handleProceedToValidate = (
+  // Goods Reception Confirm & Receive Handler
+  const handleProceedToValidate = async (
     extractedData: ExtractedLabelData,
     shipment: InboundShipmentWithItems
   ) => {
-    Alert.alert(
-      'Ready for Validation (Step 4)',
-      `Data Captured via ${extractedData.source}:\n` +
-        `• PO: ${shipment.poNumber}\n` +
-        `• Product: ${extractedData.productName || shipment.items[0]?.product?.name || 'N/A'}\n` +
-        `• Batch: ${extractedData.batchNumber || 'N/A'}\n` +
-        `• Expiry: ${extractedData.expiryDate || 'N/A'}\n` +
-        `• Barcode: ${extractedData.barcode || 'N/A'}\n\n` +
-        `(Step 4 will validate these fields against PO requirements and commit to Supabase).`
-    );
+    const prodName = extractedData.productName || shipment.items[0]?.product?.name || 'Pharmaceutical Item';
+    const batch = extractedData.batchNumber || shipment.items[0]?.expectedBatch || 'BATCH-REC-01';
+    const expiry = extractedData.expiryDate || '12/2027';
+    const qty = extractedData.quantity || shipment.items[0]?.expectedQty || 10;
+    const priceText = extractedData.price ? `₹${extractedData.price}` : 'N/A';
+
+    try {
+      // Record inbound stock intake into database / storage ledger
+      await recordMedicineMovement({
+        medicineName: prodName,
+        batchNumber: batch,
+        expiryDate: expiry,
+        type: 'INBOUND',
+        quantity: qty,
+        userName: currentUser?.fullName || currentUser?.username || 'Operator',
+        notes: `PO ${shipment.poNumber} received via ${extractedData.source} (SKU: ${extractedData.sku || 'N/A'}, Price: ${priceText})`,
+      });
+
+      Alert.alert(
+        'Stock Received Successfully',
+        `• PO Number: ${shipment.poNumber}\n` +
+          `• Product: ${prodName}\n` +
+          `• SKU: ${extractedData.sku || 'N/A'}\n` +
+          `• Batch / Lot: ${batch}\n` +
+          `• Mfg Date: ${extractedData.mfgDate || 'N/A'}\n` +
+          `• Expiry: ${expiry}\n` +
+          `• Quantity: ${qty} units\n` +
+          `• Price / MRP: ${priceText}\n\n` +
+          `Inventory ledger & Inbound balance updated!`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setSelectedShipment(null);
+            },
+          },
+        ]
+      );
+    } catch (err: any) {
+      Alert.alert('Save Error', err?.message || 'Failed to update inventory balance.');
+    }
   };
 
   const handleStartScan = (task: TaskInfo) => {
     Alert.alert(
-      'Barcode / OCR Scanner',
+      'Scanner',
       `Ready to scan for:\n${task.title}\nProduct: ${task.expectedItem}\nSKU: ${task.expectedSku}\nTarget Batch: ${task.expectedBatch || 'N/A'}`
     );
   };

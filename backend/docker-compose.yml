@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  pharma-ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: congiotech_pharma_ocr
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - PHARMA_OCR_API_KEY=congiotech-pharma-secret-key-2026
+      - OCR_LANG=en
+      - OCR_USE_ANGLE_CLS=True
+      - USE_GPU=False
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+

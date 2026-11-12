@@ -13,6 +13,8 @@ export interface ExtractedLabelData {
   mfgDate?: string;
   expiryDate?: string;
   quantity?: number;
+  price?: number | string;
+  poNumber?: string;
   confidence?: number;
   rawText?: string;
 }

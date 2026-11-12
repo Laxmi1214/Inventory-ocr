@@ -6,7 +6,7 @@ import { relations } from 'drizzle-orm';
  * As specified in BRD Section 3 (User roles and end-to-end process)
  */
 export const roles = pgTable('roles', {
-  id: varchar('id', { length: 50 }).primaryKey(), // 'OPERATOR' | 'SUPERIOR' | 'INVENTORY_ADMIN' | 'SYSTEM_ADMIN'
+  id: varchar('id', { length: 50 }).primaryKey(), // 'OPERATOR' | 'SUPERVISOR' | 'INVENTORY_ADMIN' | 'SYSTEM_ADMIN'
   name: varchar('name', { length: 100 }).notNull(),
   description: text('description'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -37,7 +37,7 @@ export const products = pgTable('products', {
   id: uuid('id').defaultRandom().primaryKey(),
   sku: varchar('sku', { length: 100 }).notNull().unique(), // e.g. 'MED-PARA-500'
   name: varchar('name', { length: 255 }).notNull(), // e.g. 'Paracetamol 500mg Tablets'
-  barcode: varchar('barcode', { length: 100 }), // Barcode / GTIN code (e.g. '08901234567890')
+  barcode: varchar('barcode', { length: 100 }), // Barcode / GTIN code
   packSize: varchar('pack_size', { length: 100 }), // e.g. 'Box of 100 Tablets'
   unit: varchar('unit', { length: 50 }).notNull().default('BOX'), // e.g. 'BOX', 'STRIP', 'BOTTLE'
   isActive: boolean('is_active').notNull().default(true),
@@ -90,10 +90,10 @@ export const inboundShipmentItems = pgTable('inbound_shipment_items', {
   productId: uuid('product_id')
     .notNull()
     .references(() => products.id, { onDelete: 'cascade' }),
-  expectedBatch: varchar('expected_batch', { length: 100 }), // Expected batch if stated on ASN
+  expectedBatch: varchar('expected_batch', { length: 100 }),
   expectedQty: integer('expected_qty').notNull(),
   receivedQty: integer('received_qty').notNull().default(0),
-  status: varchar('status', { length: 50 }).notNull().default('PENDING'), // 'PENDING' | 'VERIFIED' | 'SHORTAGE' | 'EXCESS' | 'MISMATCH'
+  status: varchar('status', { length: 50 }).notNull().default('PENDING'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -110,10 +110,28 @@ export const inventory = pgTable('inventory', {
   batchId: uuid('batch_id')
     .notNull()
     .references(() => batches.id, { onDelete: 'cascade' }),
-  locationCode: varchar('location_code', { length: 100 }).notNull().default('RECEIVING_DOCK'), // Storage Zone / Shelf / Bin
+  locationCode: varchar('location_code', { length: 100 }).notNull().default('RECEIVING_DOCK'),
   quantity: integer('quantity').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 6. Inventory Transactions Ledger
+ * Tracks physical stock movements: INBOUND (Income), OUTBOUND (Go / Dispensed), ADJUSTMENT
+ */
+export const inventoryTransactions = pgTable('inventory_transactions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  productId: uuid('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
+  batchId: uuid('batch_id')
+    .references(() => batches.id, { onDelete: 'set null' }),
+  type: varchar('type', { length: 50 }).notNull(), // 'INBOUND' | 'OUTBOUND' | 'ADJUSTMENT'
+  quantity: integer('quantity').notNull(),
+  notes: text('notes'),
+  createdBy: varchar('created_by', { length: 100 }).references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
 // Relationships
@@ -127,12 +145,14 @@ export const usersRelations = relations(users, ({ one, many }) => ({
     references: [roles.id],
   }),
   receivedShipments: many(inboundShipments),
+  transactions: many(inventoryTransactions),
 }));
 
 export const productsRelations = relations(products, ({ many }) => ({
   batches: many(batches),
   shipmentItems: many(inboundShipmentItems),
   inventoryRecords: many(inventory),
+  transactions: many(inventoryTransactions),
 }));
 
 export const batchesRelations = relations(batches, ({ one, many }) => ({
@@ -141,6 +161,7 @@ export const batchesRelations = relations(batches, ({ one, many }) => ({
     references: [products.id],
   }),
   inventoryRecords: many(inventory),
+  transactions: many(inventoryTransactions),
 }));
 
 export const inboundShipmentsRelations = relations(inboundShipments, ({ one, many }) => ({
@@ -173,6 +194,21 @@ export const inventoryRelations = relations(inventory, ({ one }) => ({
   }),
 }));
 
+export const inventoryTransactionsRelations = relations(inventoryTransactions, ({ one }) => ({
+  product: one(products, {
+    fields: [inventoryTransactions.productId],
+    references: [products.id],
+  }),
+  batch: one(batches, {
+    fields: [inventoryTransactions.batchId],
+    references: [batches.id],
+  }),
+  user: one(users, {
+    fields: [inventoryTransactions.createdBy],
+    references: [users.id],
+  }),
+}));
+
 // TypeScript Types
 export type Role = typeof roles.$inferSelect;
 export type NewRole = typeof roles.$inferInsert;
@@ -194,3 +230,6 @@ export type NewInboundShipmentItem = typeof inboundShipmentItems.$inferInsert;
 
 export type Inventory = typeof inventory.$inferSelect;
 export type NewInventory = typeof inventory.$inferInsert;
+
+export type InventoryTransaction = typeof inventoryTransactions.$inferSelect;
+export type NewInventoryTransaction = typeof inventoryTransactions.$inferInsert;

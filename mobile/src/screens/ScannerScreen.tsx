@@ -8,6 +8,10 @@ import {
   TextInput,
   Alert,
   SafeAreaView,
+  ActivityIndicator,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -17,6 +21,7 @@ import {
   decodePharmaBarcode,
   ExtractedLabelData,
 } from '../services/ocr';
+import { sendBase64ToPaddleOcr, sendImageToPaddleOcr } from '../services/inventoryService';
 
 interface ScannerScreenProps {
   shipment: InboundShipmentWithItems;
@@ -31,27 +36,135 @@ export default function ScannerScreen({
 }: ScannerScreenProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
+  const isBusyRef = useRef<boolean>(false);
 
   const [isTorchOn, setIsTorchOn] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
-  const [scanResult, setScanResult] = useState<ExtractedLabelData | null>(null);
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
   const [showResultModal, setShowResultModal] = useState(false);
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualCode, setManualCode] = useState('');
 
+  // Editable Form Fields inside the Reception Modal
+  const [productName, setProductName] = useState('');
+  const [sku, setSku] = useState('');
+  const [batchNumber, setBatchNumber] = useState('');
+  const [mfgDate, setMfgDate] = useState('');
+  const [expiryDate, setExpiryDate] = useState('');
+  const [quantity, setQuantity] = useState('10');
+  const [price, setPrice] = useState('');
+  const [scanSource, setScanSource] = useState<'BARCODE' | 'QR_CODE' | 'OCR' | 'MANUAL'>('OCR');
+  const [detectedLines, setDetectedLines] = useState<string[]>([]);
+  const [rawCode, setRawCode] = useState('');
+
   // Primary expected medicine in this PO
   const primaryItem = shipment.items[0]?.product;
 
-  // 1. Live Barcode & QR Code Scanning Handler
-  const handleBarcodeScanned = ({ data, type }: { data: string; type: string }) => {
-    if (showResultModal) return;
+  // Helper to match scanned string against products in this PO
+  const findMatchingPoItem = (query: string) => {
+    const q = query.toLowerCase().trim();
+    if (!q) return null;
+    return shipment.items.find(
+      (item) =>
+        item.product?.name.toLowerCase().includes(q) ||
+        item.product?.sku.toLowerCase().includes(q) ||
+        (item.product?.barcode && item.product.barcode.includes(q)) ||
+        (item.expectedBatch && item.expectedBatch.toLowerCase().includes(q))
+    );
+  };
 
+  // 1. Live Barcode & QR Code Scanning Handler (Constant handler to prevent camera rebinding)
+  const handleBarcodeScanned = ({ data, type }: { data: string; type: string }) => {
+    if (showResultModal || isOcrProcessing || isBusyRef.current) return;
+
+    isBusyRef.current = true;
     const decoded = decodePharmaBarcode(data, type);
-    setScanResult(decoded);
+    const matchedItem = findMatchingPoItem(decoded.barcode || decoded.sku || decoded.productName || '');
+
+    setScanSource(decoded.source === 'QR_CODE' ? 'QR_CODE' : 'BARCODE');
+    setRawCode(data);
+    setProductName(decoded.productName || matchedItem?.product?.name || primaryItem?.name || '');
+    setSku(decoded.sku || matchedItem?.product?.sku || primaryItem?.sku || '');
+    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
+    setMfgDate(decoded.mfgDate || '');
+    setExpiryDate(decoded.expiryDate || '12/2027');
+    setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
+    setPrice(decoded.price ? decoded.price.toString() : '');
+    setDetectedLines([]);
     setShowResultModal(true);
   };
 
-  // 2. Manual Barcode Entry Fallback Handler
+  // 2. Real OCR Text Capture from Live Camera ("Read Text" button)
+  const handleCaptureOcr = async () => {
+    if (!cameraRef.current || isOcrProcessing || isBusyRef.current) return;
+
+    isBusyRef.current = true;
+    setIsOcrProcessing(true);
+
+    try {
+      let photo: any = null;
+      try {
+        photo = await cameraRef.current.takePictureAsync({
+          quality: 0.65,
+          base64: true,
+          shutterSound: false,
+        });
+      } catch (firstErr) {
+        console.warn('Initial capture error, retrying:', firstErr);
+        await new Promise((r) => setTimeout(r, 200));
+        photo = await cameraRef.current.takePictureAsync({
+          quality: 0.65,
+          base64: true,
+          shutterSound: false,
+        });
+      }
+
+      let ocrData;
+      if (photo?.base64) {
+        ocrData = await sendBase64ToPaddleOcr(photo.base64);
+      } else if (photo?.uri) {
+        ocrData = await sendImageToPaddleOcr(photo.uri);
+      } else {
+        Alert.alert('Camera Notice', 'Please hold camera steady and tap again.');
+        return;
+      }
+
+      if (!ocrData || (!ocrData.allLines?.length && !ocrData.rawText?.trim())) {
+        Alert.alert(
+          'No Text Detected',
+          'Could not detect readable text on medicine package. Please position it closer with adequate lighting and try again.'
+        );
+        return;
+      }
+
+      const matchedItem = findMatchingPoItem(ocrData.medicineName || ocrData.sku || ocrData.rawText || '');
+
+      setScanSource('OCR');
+      setRawCode('');
+      setProductName(ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' ? ocrData.medicineName : (matchedItem?.product?.name || primaryItem?.name || ocrData.medicineName || ''));
+      setSku(ocrData.sku || matchedItem?.product?.sku || primaryItem?.sku || '');
+      setBatchNumber(ocrData.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
+      setMfgDate(ocrData.mfgDate || '');
+      setExpiryDate(ocrData.expiryDate || '12/2027');
+      setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
+      setPrice(ocrData.mrp ? ocrData.mrp.toString() : '');
+      setDetectedLines([]);
+      setShowResultModal(true);
+    } catch (err: any) {
+      console.warn('OCR capture error:', err);
+      Alert.alert(
+        'OCR Service Notice',
+        err.message || 'Failed to process image with OCR microservice. Check backend connection.'
+      );
+    } finally {
+      setIsOcrProcessing(false);
+      setTimeout(() => {
+        isBusyRef.current = false;
+      }, 300);
+    }
+  };
+
+  // 3. Manual Entry Fallback Handler
   const handleManualSubmit = () => {
     if (!manualCode.trim()) {
       Alert.alert('Input Required', 'Please enter a barcode number or product SKU.');
@@ -59,30 +172,69 @@ export default function ScannerScreen({
     }
 
     const decoded = decodePharmaBarcode(manualCode.trim(), 'manual');
-    decoded.source = 'MANUAL';
+    const matchedItem = findMatchingPoItem(manualCode.trim());
 
-    // If matches expected PO product, attach known details
-    if (primaryItem && (primaryItem.sku.toLowerCase() === manualCode.trim().toLowerCase() || primaryItem.barcode === manualCode.trim())) {
-      decoded.productName = primaryItem.name;
-      decoded.sku = primaryItem.sku;
-      decoded.batchNumber = shipment.items[0]?.expectedBatch;
-    }
+    setScanSource('MANUAL');
+    setRawCode(manualCode.trim());
+    setProductName(decoded.productName || matchedItem?.product?.name || primaryItem?.name || '');
+    setSku(decoded.sku || matchedItem?.product?.sku || manualCode.trim());
+    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
+    setMfgDate('');
+    setExpiryDate(decoded.expiryDate || '12/2027');
+    setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
+    setPrice('');
+    setDetectedLines([]);
 
-    setScanResult(decoded);
     setShowManualModal(false);
     setManualCode('');
     setShowResultModal(true);
   };
 
-  // 3. Reset Scanner for Next Scan
+  // 4. Confirm Receiving of This Item
+  const handleConfirmReceiving = () => {
+    if (!productName.trim()) {
+      Alert.alert('Validation Error', 'Product Name is required.');
+      return;
+    }
+    if (!batchNumber.trim()) {
+      Alert.alert('Validation Error', 'Batch / Lot Number is required for pharma tracking.');
+      return;
+    }
+    const numQty = parseInt(quantity, 10);
+    if (isNaN(numQty) || numQty <= 0) {
+      Alert.alert('Validation Error', 'Please enter a valid received quantity greater than 0.');
+      return;
+    }
+
+    setShowResultModal(false);
+
+    const extractedData: ExtractedLabelData = {
+      source: scanSource === 'OCR' ? 'MANUAL' : scanSource,
+      productName: productName.trim(),
+      sku: sku.trim(),
+      batchNumber: batchNumber.trim(),
+      mfgDate: mfgDate.trim() || undefined,
+      expiryDate: expiryDate.trim() || undefined,
+      quantity: numQty,
+      price: price.trim() || undefined,
+      poNumber: shipment.poNumber,
+      barcode: rawCode || undefined,
+      confidence: 0.95,
+      rawText: detectedLines.join('\n'),
+    };
+
+    onProceedToValidate(extractedData, shipment);
+  };
+
+  // 5. Reset Scanner for Next Scan
   const handleScanAgain = () => {
     setShowResultModal(false);
-    setScanResult(null);
   };
 
   if (!permission) {
     return (
       <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color="#38BDF8" />
         <Text style={styles.permissionText}>Checking camera permissions...</Text>
       </View>
     );
@@ -97,13 +249,13 @@ export default function ScannerScreen({
           </View>
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionDesc}>
-            Congiotech Inventory needs camera access to scan pharmaceutical barcodes and QR codes for goods reception.
+            Goods Reception requires camera access to scan barcodes, QR codes, and extract medicine package text with OCR.
           </Text>
           <TouchableOpacity style={styles.permissionButton} onPress={requestPermission} activeOpacity={0.8}>
             <Text style={styles.permissionButtonText}>Grant Camera Permission</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.permissionCancelButton} onPress={onBack} activeOpacity={0.7}>
-            <Text style={styles.permissionCancelText}>Go Back</Text>
+            <Text style={styles.permissionCancelText}>Go Back to POs</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -114,7 +266,7 @@ export default function ScannerScreen({
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Live Camera View for Barcode & QR Scanning */}
+      {/* Live Camera View for Barcode, QR Scanning & OCR Text Extraction */}
       <CameraView
         ref={cameraRef}
         style={StyleSheet.absoluteFill}
@@ -124,7 +276,7 @@ export default function ScannerScreen({
         barcodeScannerSettings={{
           barcodeTypes: ['qr', 'code128', 'code39', 'ean13', 'ean8', 'datamatrix'],
         }}
-        onBarcodeScanned={showResultModal ? undefined : handleBarcodeScanned}
+        onBarcodeScanned={handleBarcodeScanned}
       />
 
       {/* Viewfinder Overlay */}
@@ -158,15 +310,22 @@ export default function ScannerScreen({
             <View style={[styles.corner, styles.cornerBL]} />
             <View style={[styles.corner, styles.cornerBR]} />
 
-            {/* Glowing Laser Scan Line */}
-            <View style={styles.laserLine} />
+            {/* Scanning Indicator */}
+            {isOcrProcessing ? (
+              <View style={styles.reticleSpinner}>
+                <ActivityIndicator size="large" color="#38BDF8" />
+                <Text style={styles.processingText}>Reading Package Text (OCR)...</Text>
+              </View>
+            ) : (
+              <View style={styles.laserLine} />
+            )}
           </View>
           <Text style={styles.reticleInstruction}>
-            Position Barcode or QR Code inside frame
+            Auto-scanning Barcode / QR • Or tap Read Text (OCR) below
           </Text>
         </View>
 
-        {/* Bottom Bar: Manual Entry & Scanner Status */}
+        {/* Bottom Bar: Manual Entry, OCR Shutter Button, and Mode Indicator */}
         <View style={styles.bottomBar}>
           <TouchableOpacity
             style={styles.manualEntryBtn}
@@ -174,26 +333,47 @@ export default function ScannerScreen({
             activeOpacity={0.7}
           >
             <Ionicons name="keypad-outline" size={20} color="#CBD5E1" />
-            <Text style={styles.manualEntryText}>Manual Entry</Text>
+            <Text style={styles.manualEntryText}>Manual</Text>
+          </TouchableOpacity>
+
+          {/* Central "Read Text (OCR)" Shutter Button */}
+          <TouchableOpacity
+            style={[styles.ocrCaptureBtn, isOcrProcessing && styles.ocrCaptureBtnDisabled]}
+            onPress={handleCaptureOcr}
+            disabled={isOcrProcessing}
+            activeOpacity={0.85}
+          >
+            {isOcrProcessing ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <>
+                <Ionicons name="camera" size={22} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.ocrCaptureBtnText}>Read Text (OCR)</Text>
+              </>
+            )}
           </TouchableOpacity>
 
           <View style={styles.modeIndicator}>
             <View style={styles.liveDot} />
-            <Text style={styles.modeText}>Barcode / QR</Text>
-            <Text style={styles.modeTextSub}>Auto-Detect Active</Text>
+            <Text style={styles.modeText}>Active</Text>
+            <Text style={styles.modeTextSub}>PO Reception</Text>
           </View>
         </View>
       </SafeAreaView>
 
-      {/* Scan Result Modal */}
+      {/* Reception Verification Modal with all Required Text Fields */}
       <Modal
         visible={showResultModal}
         transparent
         animationType="slide"
         onRequestClose={handleScanAgain}
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
           <View style={styles.modalCard}>
+            {/* Modal Header */}
             <View style={styles.modalHeader}>
               <View style={styles.modalHeaderTitleGroup}>
                 <View
@@ -201,86 +381,232 @@ export default function ScannerScreen({
                     styles.sourceTag,
                     {
                       backgroundColor:
-                        scanResult?.source === 'QR_CODE'
+                        scanSource === 'OCR'
+                          ? 'rgba(14, 165, 233, 0.15)'
+                          : scanSource === 'QR_CODE'
                           ? 'rgba(16, 185, 129, 0.15)'
                           : 'rgba(56, 189, 248, 0.15)',
                     },
                   ]}
                 >
                   <Ionicons
-                    name={scanResult?.source === 'QR_CODE' ? 'qr-code-outline' : 'barcode-outline'}
-                    size={14}
-                    color={scanResult?.source === 'QR_CODE' ? '#10B981' : '#38BDF8'}
+                    name={
+                      scanSource === 'OCR'
+                        ? 'scan-outline'
+                        : scanSource === 'QR_CODE'
+                        ? 'qr-code-outline'
+                        : 'barcode-outline'
+                    }
+                    size={13}
+                    color={
+                      scanSource === 'OCR'
+                        ? '#38BDF8'
+                        : scanSource === 'QR_CODE'
+                        ? '#10B981'
+                        : '#38BDF8'
+                    }
                     style={{ marginRight: 4 }}
                   />
                   <Text
                     style={[
                       styles.sourceTagText,
                       {
-                        color: scanResult?.source === 'QR_CODE' ? '#10B981' : '#38BDF8',
+                        color:
+                          scanSource === 'OCR'
+                            ? '#38BDF8'
+                            : scanSource === 'QR_CODE'
+                            ? '#10B981'
+                            : '#38BDF8',
                       },
                     ]}
                   >
-                    {scanResult?.source === 'QR_CODE'
-                      ? scanResult.barcodeType || 'QR Code Captured'
-                      : scanResult?.source === 'MANUAL'
-                      ? 'Manual Entry'
+                    {scanSource === 'OCR'
+                      ? 'PaddleOCR Real Text'
+                      : scanSource === 'QR_CODE'
+                      ? 'QR Code Captured'
+                      : scanSource === 'MANUAL'
+                      ? 'Manual Code'
                       : 'Barcode Captured'}
                   </Text>
                 </View>
-                <Text style={styles.modalTitle}>Scan Result</Text>
+                <Text style={styles.modalTitle}>Receive Medicine for PO</Text>
               </View>
 
-              {scanResult?.confidence && (
-                <View style={styles.confidenceBadge}>
-                  <Text style={styles.confidenceText}>
-                    {Math.round(scanResult.confidence * 100)}% Match
-                  </Text>
-                </View>
-              )}
+              <TouchableOpacity onPress={handleScanAgain} style={styles.modalCloseButton}>
+                <Ionicons name="close" size={20} color="#94A3B8" />
+              </TouchableOpacity>
             </View>
 
-            {/* Extracted Details Box */}
-            <View style={styles.detailsBox}>
-              {scanResult?.productName ? (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Product:</Text>
-                  <Text style={styles.detailValueBold}>{scanResult.productName}</Text>
+            {/* Scrollable Form Fields */}
+            <ScrollView
+              style={styles.modalScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* Field 1: Purchase Order & Supplier (Read-Only Context) */}
+              <View style={styles.poSummaryCard}>
+                <View style={styles.poSummaryRow}>
+                  <Text style={styles.poSummaryLabel}>Purchase Order (PO):</Text>
+                  <Text style={styles.poSummaryValue}>{shipment.poNumber}</Text>
                 </View>
-              ) : null}
+                <View style={styles.poSummaryRow}>
+                  <Text style={styles.poSummaryLabel}>Supplier / Vendor:</Text>
+                  <Text style={styles.poSummaryValueSub}>{shipment.supplierName}</Text>
+                </View>
+              </View>
 
-              {scanResult?.barcode ? (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Barcode / Code:</Text>
-                  <Text style={styles.detailValue}>{scanResult.barcode}</Text>
+              {/* Field 2: Product Name */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.fieldLabel}>Product Name *</Text>
+                <View style={styles.fieldInputWrapper}>
+                  <Ionicons name="medkit-outline" size={17} color="#64748B" style={styles.fieldIcon} />
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={productName}
+                    onChangeText={setProductName}
+                    placeholder="e.g. Paracetamol 500mg Tablets"
+                    placeholderTextColor="#64748B"
+                  />
                 </View>
-              ) : null}
+              </View>
 
-              {scanResult?.sku ? (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>SKU:</Text>
-                  <Text style={styles.detailValue}>{scanResult.sku}</Text>
+              {/* Field 3: SKU */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.fieldLabel}>SKU / Product Code</Text>
+                <View style={styles.fieldInputWrapper}>
+                  <Ionicons name="pricetag-outline" size={17} color="#64748B" style={styles.fieldIcon} />
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={sku}
+                    onChangeText={setSku}
+                    placeholder="e.g. MED-PARA-500"
+                    placeholderTextColor="#64748B"
+                    autoCapitalize="characters"
+                  />
                 </View>
-              ) : null}
+              </View>
 
-              {scanResult?.batchNumber ? (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Batch / Lot:</Text>
-                  <Text style={[styles.detailValueBold, { color: '#38BDF8' }]}>
-                    {scanResult.batchNumber}
-                  </Text>
+              {/* Two Column: Batch Number & Price / MRP */}
+              <View style={styles.twoColRow}>
+                {/* Field 4: Batch Number */}
+                <View style={[styles.inputGroup, { flex: 1, marginRight: 6 }]}>
+                  <Text style={styles.fieldLabel}>Batch / Lot No *</Text>
+                  <View style={styles.fieldInputWrapper}>
+                    <Ionicons name="barcode-outline" size={17} color="#64748B" style={styles.fieldIcon} />
+                    <TextInput
+                      style={styles.fieldInput}
+                      value={batchNumber}
+                      onChangeText={setBatchNumber}
+                      placeholder="e.g. BATCH-99"
+                      placeholderTextColor="#64748B"
+                      autoCapitalize="characters"
+                    />
+                  </View>
                 </View>
-              ) : null}
 
-              {scanResult?.expiryDate ? (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Expiry Date:</Text>
-                  <Text style={[styles.detailValueBold, { color: '#10B981' }]}>
-                    {scanResult.expiryDate}
-                  </Text>
+                {/* Field 5: Price / MRP */}
+                <View style={[styles.inputGroup, { flex: 1, marginLeft: 6 }]}>
+                  <Text style={styles.fieldLabel}>Price / MRP (₹)</Text>
+                  <View style={styles.fieldInputWrapper}>
+                    <Ionicons name="cash-outline" size={17} color="#64748B" style={styles.fieldIcon} />
+                    <TextInput
+                      style={styles.fieldInput}
+                      value={price}
+                      onChangeText={setPrice}
+                      placeholder="e.g. 145.50"
+                      placeholderTextColor="#64748B"
+                      keyboardType="numeric"
+                    />
+                  </View>
                 </View>
-              ) : null}
-            </View>
+              </View>
+
+              {/* Two Column: Manufacture Date & Expiry Date */}
+              <View style={styles.twoColRow}>
+                {/* Field 6: Manufacture Date */}
+                <View style={[styles.inputGroup, { flex: 1, marginRight: 6 }]}>
+                  <Text style={styles.fieldLabel}>Manufacture Date</Text>
+                  <View style={styles.fieldInputWrapper}>
+                    <Ionicons name="calendar-outline" size={17} color="#64748B" style={styles.fieldIcon} />
+                    <TextInput
+                      style={styles.fieldInput}
+                      value={mfgDate}
+                      onChangeText={setMfgDate}
+                      placeholder="MM/YYYY"
+                      placeholderTextColor="#64748B"
+                    />
+                  </View>
+                </View>
+
+                {/* Field 7: Expiry Date */}
+                <View style={[styles.inputGroup, { flex: 1, marginLeft: 6 }]}>
+                  <Text style={styles.fieldLabel}>Expiry Date *</Text>
+                  <View style={styles.fieldInputWrapper}>
+                    <Ionicons name="time-outline" size={17} color="#64748B" style={styles.fieldIcon} />
+                    <TextInput
+                      style={styles.fieldInput}
+                      value={expiryDate}
+                      onChangeText={setExpiryDate}
+                      placeholder="MM/YYYY"
+                      placeholderTextColor="#64748B"
+                    />
+                  </View>
+                </View>
+              </View>
+
+              {/* Field 8: Quantity (Received Units with Stepper) */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.fieldLabel}>Received Quantity (Units / Packs) *</Text>
+                <View style={styles.stepperContainer}>
+                  <TouchableOpacity
+                    style={styles.stepperButton}
+                    onPress={() => {
+                      const val = Math.max(1, (parseInt(quantity, 10) || 1) - 5);
+                      setQuantity(val.toString());
+                    }}
+                  >
+                    <Text style={styles.stepperButtonText}>-5</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.stepperButton}
+                    onPress={() => {
+                      const val = Math.max(1, (parseInt(quantity, 10) || 1) - 1);
+                      setQuantity(val.toString());
+                    }}
+                  >
+                    <Ionicons name="remove" size={18} color="#F8FAFC" />
+                  </TouchableOpacity>
+
+                  <TextInput
+                    style={styles.stepperInput}
+                    value={quantity}
+                    onChangeText={setQuantity}
+                    keyboardType="numeric"
+                  />
+
+                  <TouchableOpacity
+                    style={styles.stepperButton}
+                    onPress={() => {
+                      const val = (parseInt(quantity, 10) || 0) + 1;
+                      setQuantity(val.toString());
+                    }}
+                  >
+                    <Ionicons name="add" size={18} color="#F8FAFC" />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.stepperButton}
+                    onPress={() => {
+                      const val = (parseInt(quantity, 10) || 0) + 5;
+                      setQuantity(val.toString());
+                    }}
+                  >
+                    <Text style={styles.stepperButtonText}>+5</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
 
             {/* Action Buttons */}
             <View style={styles.modalActions}>
@@ -295,20 +621,15 @@ export default function ScannerScreen({
 
               <TouchableOpacity
                 style={styles.validateButton}
-                onPress={() => {
-                  setShowResultModal(false);
-                  if (scanResult) {
-                    onProceedToValidate(scanResult, shipment);
-                  }
-                }}
+                onPress={handleConfirmReceiving}
                 activeOpacity={0.85}
               >
-                <Text style={styles.validateButtonText}>Proceed to Validate</Text>
-                <Ionicons name="arrow-forward" size={16} color="#FFFFFF" style={{ marginLeft: 6 }} />
+                <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.validateButtonText}>Confirm & Receive</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Manual Entry Fallback Modal */}
@@ -550,13 +871,23 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
+  reticleSpinner: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  processingText: {
+    color: '#38BDF8',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 10,
+  },
   reticleInstruction: {
     color: '#CBD5E1',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
-    marginTop: 20,
+    marginTop: 16,
     textAlign: 'center',
-    paddingHorizontal: 30,
+    paddingHorizontal: 24,
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
@@ -565,44 +896,68 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingBottom: 28,
   },
   manualEntryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#334155',
   },
   manualEntryText: {
     color: '#F8FAFC',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    marginLeft: 8,
+    marginLeft: 6,
+  },
+  ocrCaptureBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0284C7',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: 16,
+    shadowColor: '#0284C7',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 5,
+    borderWidth: 1.5,
+    borderColor: '#38BDF8',
+  },
+  ocrCaptureBtnDisabled: {
+    backgroundColor: '#075985',
+    opacity: 0.8,
+  },
+  ocrCaptureBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
   modeIndicator: {
     alignItems: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#334155',
   },
   liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#10B981',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   modeText: {
     color: '#F8FAFC',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   modeTextSub: {
@@ -619,18 +974,29 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 24,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
     borderWidth: 1,
     borderColor: '#334155',
+    maxHeight: '88%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   modalHeaderTitleGroup: {
     flex: 1,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sourceTag: {
     flexDirection: 'row',
@@ -646,7 +1012,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '800',
     color: '#F8FAFC',
   },
@@ -656,49 +1022,122 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 16,
   },
-  confidenceBadge: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+  modalScroll: {
+    maxHeight: 380,
   },
-  confidenceText: {
-    color: '#10B981',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  detailsBox: {
+  poSummaryCard: {
     backgroundColor: '#0F172A',
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#334155',
-    marginBottom: 20,
-    gap: 8,
   },
-  detailRow: {
+  poSummaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginVertical: 2,
   },
-  detailLabel: {
-    fontSize: 12,
+  poSummaryLabel: {
+    fontSize: 11,
     color: '#94A3B8',
-    fontWeight: '500',
-  },
-  detailValue: {
-    fontSize: 13,
-    color: '#F8FAFC',
     fontWeight: '600',
   },
-  detailValueBold: {
-    fontSize: 14,
-    color: '#F8FAFC',
+  poSummaryValue: {
+    fontSize: 12,
+    color: '#38BDF8',
     fontWeight: '800',
+  },
+  poSummaryValueSub: {
+    fontSize: 11,
+    color: '#CBD5E1',
+    fontWeight: '600',
+  },
+  inputGroup: {
+    marginBottom: 10,
+  },
+  twoColRow: {
+    flexDirection: 'row',
+  },
+  fieldLabel: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  fieldInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 10,
+    height: 42,
+  },
+  fieldIcon: {
+    marginRight: 6,
+  },
+  fieldInput: {
+    flex: 1,
+    color: '#F8FAFC',
+    fontSize: 13,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    padding: 3,
+  },
+  stepperButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#1E293B',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepperButtonText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  stepperInput: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#38BDF8',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  ocrLinesBox: {
+    backgroundColor: '#0F172A',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 6,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  ocrLinesTitle: {
+    color: '#38BDF8',
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  ocrLineText: {
+    color: '#94A3B8',
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: 'monospace',
   },
   modalActions: {
     flexDirection: 'row',
     gap: 12,
+    marginTop: 12,
   },
   retakeButton: {
     flex: 1,
@@ -706,12 +1145,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#334155',
-    paddingVertical: 14,
-    borderRadius: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
   },
   retakeButtonText: {
     color: '#F8FAFC',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   validateButton: {
@@ -719,9 +1158,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0284C7',
-    paddingVertical: 14,
-    borderRadius: 14,
+    backgroundColor: '#10B981',
+    paddingVertical: 13,
+    borderRadius: 12,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 3,
   },
   validateButtonText: {
     color: '#FFFFFF',

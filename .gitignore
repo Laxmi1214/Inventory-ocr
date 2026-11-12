@@ -14,6 +14,7 @@ node_modules/
 *.env
 !.env.example
 !mobile/.env.example
+!backend/.env.example
 
 # 3. Expo & React Native Build Outputs
 .expo/
@@ -38,24 +39,48 @@ ios/
 *.apk
 *.aab
 
-# 5. OCR Models, Caches & Uploads (Auto-downloaded at runtime)
+# 5. Python & Virtual Environments
+__pycache__/
+*/__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# 6. OCR Models, Model Weights, & Cache (Auto-downloaded at runtime - NEVER commit)
+backend/cache/
+*/cache/
+**/cache/
 *.traineddata
+*.pth
+*.pdiparams
+*.pdparams
+*.pdmodel
+*.pdopt
 */ocr-uploads/
 ocr-uploads/
 uploads/
 tmp/
 
-# 6. Logs & Diagnostics
+# 7. Temporary / Scratch Scripts & Logs
 *.log
+backend/uvicorn_*.log
 npm-debug.*
 yarn-debug.*
 yarn-error.*
 .metro-health-check*
+start_ocr.py
+backend/test_*.py
+test_*.py
 
-# 7. OS & Editor Artifacts
+# 8. OS & Editor Artifacts
 .DS_Store
 Thumbs.db
 .idea/
+.vscode/
 *.swp
 *.swo
-

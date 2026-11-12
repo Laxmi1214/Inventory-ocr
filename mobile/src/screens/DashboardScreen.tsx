@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,22 +6,24 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  Platform,
-  StatusBar as RNStatusBar,
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getInventoryMetrics, InventoryMetrics } from '../services/inventoryService';
 
 export interface UserSession {
   email: string;
   fullName?: string;
   role?: string;
+  username?: string;
+  id?: string;
 }
 
 interface DashboardScreenProps {
   user: UserSession;
   onLogout: () => void;
   onSelectTask?: (taskType: string) => void;
+  onOpenOcrScanner?: () => void;
 }
 
 const getRoleBadge = (role?: string) => {
@@ -37,24 +39,46 @@ const getRoleBadge = (role?: string) => {
   }
 };
 
-export default function DashboardScreen({ user, onLogout, onSelectTask }: DashboardScreenProps) {
+export default function DashboardScreen({
+  user,
+  onLogout,
+  onSelectTask,
+  onOpenOcrScanner,
+}: DashboardScreenProps) {
   const roleBadge = getRoleBadge(user.role);
-  const displayName = user.fullName || user.email.split('@')[0] || 'Warehouse Staff';
+  const displayName = user.fullName || user.username || user.email.split('@')[0] || 'Staff';
+
+  const [metrics, setMetrics] = useState<InventoryMetrics>({
+    totalInStock: 950,
+    totalIncome: 650,
+    totalGo: 20,
+    medicineCount: 3,
+  });
+
+  const loadMetrics = async () => {
+    try {
+      const data = await getInventoryMetrics();
+      setMetrics(data);
+    } catch (e) {
+      console.warn('Failed to load metrics:', e);
+    }
+  };
+
+  useEffect(() => {
+    loadMetrics();
+  }, []);
 
   const handleTaskPress = (taskId: string, title: string) => {
     if (onSelectTask) {
       onSelectTask(taskId);
     } else {
-      Alert.alert(title, `Selected: ${title}\n(Workflow screens will be implemented in the next steps)`);
+      Alert.alert(title, `Selected: ${title}\n(Workflow screens active)`);
     }
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {/* Top App Bar */}
         <View style={styles.topBar}>
           <View style={styles.userInfoContainer}>
@@ -71,11 +95,7 @@ export default function DashboardScreen({ user, onLogout, onSelectTask }: Dashbo
             </View>
           </View>
 
-          <TouchableOpacity
-            style={styles.logoutButton}
-            onPress={onLogout}
-            activeOpacity={0.7}
-          >
+          <TouchableOpacity style={styles.logoutButton} onPress={onLogout} activeOpacity={0.7}>
             <Ionicons name="log-out-outline" size={20} color="#F43F5E" />
           </TouchableOpacity>
         </View>
@@ -84,9 +104,9 @@ export default function DashboardScreen({ user, onLogout, onSelectTask }: Dashbo
         <View style={styles.bannerContainer}>
           <View style={styles.bannerTextGroup}>
             <Text style={styles.bannerCompany}>CONGIOTECH</Text>
-            <Text style={styles.bannerTitle}>Label Verification & Batch Tracking</Text>
+            <Text style={styles.bannerTitle}>Medicine Stock & OCR Verification</Text>
             <Text style={styles.bannerSubtitle}>
-              Select a warehouse workflow to start scanning & inventory validation
+              Real-time balance of inventory, inbound intake, and outbound dispatch
             </Text>
           </View>
           <View style={styles.bannerIconBadge}>
@@ -94,78 +114,88 @@ export default function DashboardScreen({ user, onLogout, onSelectTask }: Dashbo
           </View>
         </View>
 
-        {/* Quick Operational Metrics */}
-        <Text style={styles.sectionTitle}>Today's Operational Summary</Text>
+        {/* Live Medicine Inventory Metrics: In Stock, Income, Go */}
+        <Text style={styles.sectionTitle}>Medicine Inventory Balance</Text>
         <View style={styles.metricsRow}>
-          <View style={styles.metricCard}>
+          {/* Card 1: In Stock */}
+          <View style={[styles.metricCard, styles.metricCardStock]}>
             <View style={[styles.metricIconCircle, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }]}>
-              <Ionicons name="cube-outline" size={18} color="#38BDF8" />
+              <Ionicons name="cube" size={18} color="#38BDF8" />
             </View>
-            <Text style={styles.metricValue}>12</Text>
-            <Text style={styles.metricLabel}>Pending Shipments</Text>
+            <Text style={styles.metricValue}>{metrics.totalInStock.toLocaleString()}</Text>
+            <Text style={styles.metricLabel}>In Stock</Text>
+            <Text style={styles.metricSubLabel}>{metrics.medicineCount} Product Lines</Text>
           </View>
 
-          <View style={styles.metricCard}>
+          {/* Card 2: Income (Inbound) */}
+          <View style={[styles.metricCard, styles.metricCardIncome]}>
             <View style={[styles.metricIconCircle, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
-              <Ionicons name="checkmark-done-outline" size={18} color="#10B981" />
+              <Ionicons name="arrow-down-circle" size={18} color="#10B981" />
             </View>
-            <Text style={styles.metricValue}>84</Text>
-            <Text style={styles.metricLabel}>Batches Verified</Text>
+            <Text style={[styles.metricValue, { color: '#10B981' }]}>
+              +{metrics.totalIncome.toLocaleString()}
+            </Text>
+            <Text style={styles.metricLabel}>Total Income</Text>
+            <Text style={styles.metricSubLabel}>Goods Received</Text>
           </View>
 
-          <View style={styles.metricCard}>
-            <View style={[styles.metricIconCircle, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
-              <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
+          {/* Card 3: Go (Outbound) */}
+          <View style={[styles.metricCard, styles.metricCardGo]}>
+            <View style={[styles.metricIconCircle, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
+              <Ionicons name="arrow-up-circle" size={18} color="#F59E0B" />
             </View>
-            <Text style={styles.metricValue}>2</Text>
-            <Text style={styles.metricLabel}>Open Exceptions</Text>
+            <Text style={[styles.metricValue, { color: '#F59E0B' }]}>
+              -{metrics.totalGo.toLocaleString()}
+            </Text>
+            <Text style={styles.metricLabel}>Total Go</Text>
+            <Text style={styles.metricSubLabel}>Dispatched / Sold</Text>
           </View>
         </View>
 
-        {/* Primary Warehouse Workflows */}
-        <Text style={styles.sectionTitle}>Main Warehouse Tasks</Text>
+        {/* Warehouse Workflows */}
+        <Text style={styles.sectionTitle}>Standard Warehouse Tasks</Text>
         <View style={styles.tasksContainer}>
-          {/* Task 1: Goods Reception */}
+          {/* Task 1: Goods Reception (Income) */}
           <TouchableOpacity
             style={styles.taskCard}
-            onPress={() => handleTaskPress('RECEIVING', 'Goods Reception')}
+            onPress={() => handleTaskPress('RECEIVING', 'Goods Reception (Inbound)')}
             activeOpacity={0.8}
           >
-            <View style={[styles.taskIconCircle, { backgroundColor: '#0284C7' }]}>
-              <Ionicons name="download-outline" size={24} color="#FFFFFF" />
+            <View style={[styles.taskIconCircle, { backgroundColor: '#10B981' }]}>
+              <Ionicons name="download-outline" size={22} color="#FFFFFF" />
             </View>
             <View style={styles.taskInfo}>
               <View style={styles.taskTitleRow}>
-                <Text style={styles.taskTitle}>Goods Reception</Text>
-                <View style={styles.taskBadge}>
-                  <Text style={styles.taskBadgeText}>Inbound</Text>
+                <Text style={styles.taskTitle}>Goods Reception (Income)</Text>
+                <View style={[styles.taskBadge, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                  <Text style={[styles.taskBadgeText, { color: '#10B981' }]}>Inbound</Text>
                 </View>
               </View>
               <Text style={styles.taskDesc}>
-                Verify incoming packages against PO / ASN. Scan label, decode barcode & match expiry.
+                Verify incoming deliveries against PO. Scan labels and record stock income.
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#64748B" />
           </TouchableOpacity>
 
-          {/* Task 2: Pick & Pack */}
+          {/* Task 2: Pick & Pack (Go) */}
           <TouchableOpacity
             style={styles.taskCard}
-            onPress={() => handleTaskPress('PICK_PACK', 'Pick & Pack')}
+            onPress={() => handleTaskPress('PICK_PACK', 'Pick & Pack (Outbound)')}
             activeOpacity={0.8}
           >
-            <View style={[styles.taskIconCircle, { backgroundColor: '#8B5CF6' }]}>
-              <Ionicons name="cart-outline" size={24} color="#FFFFFF" />
+            <View style={[styles.taskIconCircle, { backgroundColor: '#F59E0B' }]}>
+              <Ionicons name="open-outline" size={22} color="#FFFFFF" />
             </View>
             <View style={styles.taskInfo}>
               <View style={styles.taskTitleRow}>
-                <Text style={styles.taskTitle}>Pick & Pack</Text>
-                <View style={[styles.taskBadge, { backgroundColor: 'rgba(139, 92, 246, 0.2)' }]}>
-                  <Text style={[styles.taskBadgeText, { color: '#C4B5FD' }]}>Outbound</Text>
+                <Text style={styles.taskTitle}>Pick & Pack (Go / Outbound)</Text>
+                <View style={[styles.taskBadge, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
+                  <Text style={[styles.taskBadgeText, { color: '#F59E0B' }]}>Outbound</Text>
                 </View>
               </View>
               <Text style={styles.taskDesc}>
-                Fulfil customer pick lists. Validate correct product SKU, authorized batch & stock deduct.
+                Strict FIFO batch dispatch. Fulfill hospital orders and record outgoing inventory.
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#64748B" />
@@ -174,55 +204,24 @@ export default function DashboardScreen({ user, onLogout, onSelectTask }: Dashbo
           {/* Task 3: Stock Counting */}
           <TouchableOpacity
             style={styles.taskCard}
-            onPress={() => handleTaskPress('STOCK_COUNT', 'Stock Counting')}
+            onPress={() => handleTaskPress('STOCK_COUNT', 'Stock Counting (Audit)')}
             activeOpacity={0.8}
           >
-            <View style={[styles.taskIconCircle, { backgroundColor: '#10B981' }]}>
-              <Ionicons name="layers-outline" size={24} color="#FFFFFF" />
+            <View style={[styles.taskIconCircle, { backgroundColor: '#8B5CF6' }]}>
+              <Ionicons name="list-outline" size={22} color="#FFFFFF" />
             </View>
             <View style={styles.taskInfo}>
               <View style={styles.taskTitleRow}>
-                <Text style={styles.taskTitle}>Stock Counting</Text>
-                <View style={[styles.taskBadge, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
-                  <Text style={[styles.taskBadgeText, { color: '#6EE7B7' }]}>Audit</Text>
+                <Text style={styles.taskTitle}>Stock Counting & Audit</Text>
+                <View style={[styles.taskBadge, { backgroundColor: 'rgba(139, 92, 246, 0.15)' }]}>
+                  <Text style={[styles.taskBadgeText, { color: '#A78BFA' }]}>Audit</Text>
                 </View>
               </View>
               <Text style={styles.taskDesc}>
-                Physical count vs recorded stock. Detect discrepancies & calculate warehouse variance.
+                Physical cycle count and variance checking against recorded stock.
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#64748B" />
-          </TouchableOpacity>
-        </View>
-
-        {/* Secondary / Operational Section */}
-        <Text style={styles.sectionTitle}>Operational Control</Text>
-        <View style={styles.quickActionsRow}>
-          <TouchableOpacity
-            style={styles.quickActionCard}
-            onPress={() => Alert.alert('Exceptions', 'Exceptions & supervisor override review will be connected here.')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="warning-outline" size={22} color="#F59E0B" />
-            <Text style={styles.quickActionText}>Exceptions</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.quickActionCard}
-            onPress={() => Alert.alert('History', 'Audit log & transaction history will be connected here.')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="time-outline" size={22} color="#38BDF8" />
-            <Text style={styles.quickActionText}>Audit Logs</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.quickActionCard}
-            onPress={() => Alert.alert('Inventory Master', 'Product & batch records list.')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="file-tray-full-outline" size={22} color="#A78BFA" />
-            <Text style={styles.quickActionText}>Inventory</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -234,11 +233,10 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#0F172A',
-    paddingTop: Platform.OS === 'android' ? RNStatusBar.currentHeight : 0,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: 20,
+    paddingTop: 16,
     paddingBottom: 40,
   },
   topBar: {
@@ -246,7 +244,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
-    marginTop: 8,
   },
   userInfoContainer: {
     flexDirection: 'row',
@@ -273,73 +270,70 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
-    marginTop: 4,
+    marginTop: 2,
   },
   roleBadgeText: {
     fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
+    fontWeight: '600',
   },
   logoutButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(244, 63, 94, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(244, 63, 94, 0.3)',
+    backgroundColor: '#1E293B',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   bannerContainer: {
     backgroundColor: '#1E293B',
     borderRadius: 16,
     padding: 18,
-    borderWidth: 1,
-    borderColor: '#334155',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 22,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginBottom: 24,
   },
   bannerTextGroup: {
     flex: 1,
-    marginRight: 12,
+    paddingRight: 12,
   },
   bannerCompany: {
+    color: '#38BDF8',
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1.2,
-    color: '#38BDF8',
+    letterSpacing: 1,
+    marginBottom: 2,
   },
   bannerTitle: {
-    fontSize: 15,
-    fontWeight: '700',
     color: '#F8FAFC',
-    marginTop: 2,
+    fontSize: 16,
+    fontWeight: '800',
   },
   bannerSubtitle: {
-    fontSize: 12,
     color: '#94A3B8',
+    fontSize: 12,
     marginTop: 4,
-    lineHeight: 16,
   },
   bannerIconBadge: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#0F172A',
+    backgroundColor: 'rgba(2, 132, 199, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#38BDF8',
+    borderColor: 'rgba(2, 132, 199, 0.3)',
   },
   sectionTitle: {
-    fontSize: 14,
+    color: '#E2E8F0',
+    fontSize: 15,
     fontWeight: '700',
-    color: '#94A3B8',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
     marginBottom: 12,
+    marginTop: 4,
   },
   metricsRow: {
     flexDirection: 'row',
@@ -353,7 +347,19 @@ const styles = StyleSheet.create({
     padding: 12,
     borderWidth: 1,
     borderColor: '#334155',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+  },
+  metricCardStock: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#38BDF8',
+  },
+  metricCardIncome: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#10B981',
+  },
+  metricCardGo: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#F59E0B',
   },
   metricIconCircle: {
     width: 32,
@@ -361,37 +367,92 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   metricValue: {
+    color: '#F8FAFC',
     fontSize: 18,
     fontWeight: '800',
-    color: '#F8FAFC',
   },
   metricLabel: {
-    fontSize: 10,
-    color: '#94A3B8',
+    color: '#CBD5E1',
+    fontSize: 11,
+    fontWeight: '600',
     marginTop: 2,
-    textAlign: 'center',
-    fontWeight: '500',
   },
-  tasksContainer: {
-    gap: 12,
-    marginBottom: 24,
+  metricSubLabel: {
+    color: '#64748B',
+    fontSize: 10,
+    marginTop: 2,
   },
-  taskCard: {
+  ocrHeroButton: {
     backgroundColor: '#1E293B',
     borderRadius: 16,
     padding: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
     flexDirection: 'row',
     alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#0284C7',
+    marginBottom: 24,
+    shadowColor: '#0284C7',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  ocrHeroIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#0284C7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  ocrBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  ocrHeroTitle: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  privatePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    gap: 3,
+  },
+  privatePillText: {
+    color: '#10B981',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  ocrHeroDesc: {
+    color: '#94A3B8',
+    fontSize: 12,
+    marginTop: 3,
+  },
+  tasksContainer: {
+    gap: 12,
+  },
+  taskCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   taskIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
@@ -403,16 +464,15 @@ const styles = StyleSheet.create({
   taskTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
     marginBottom: 4,
   },
   taskTitle: {
-    fontSize: 15,
-    fontWeight: '700',
     color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
   },
   taskBadge: {
-    backgroundColor: 'rgba(2, 132, 199, 0.2)',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -420,32 +480,10 @@ const styles = StyleSheet.create({
   taskBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#38BDF8',
   },
   taskDesc: {
-    fontSize: 12,
     color: '#94A3B8',
+    fontSize: 12,
     lineHeight: 16,
   },
-  quickActionsRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  quickActionCard: {
-    flex: 1,
-    backgroundColor: '#1E293B',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: '#334155',
-    alignItems: 'center',
-    gap: 6,
-  },
-  quickActionText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#CBD5E1',
-  },
 });
-
