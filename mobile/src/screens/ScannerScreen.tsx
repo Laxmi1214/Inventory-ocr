@@ -106,7 +106,7 @@ export default function ScannerScreen({
       let photo: any = null;
       try {
         photo = await cameraRef.current.takePictureAsync({
-          quality: 0.65,
+          quality: 0.5,
           base64: true,
           shutterSound: false,
         });
@@ -114,7 +114,7 @@ export default function ScannerScreen({
         console.warn('Initial capture error, retrying:', firstErr);
         await new Promise((r) => setTimeout(r, 200));
         photo = await cameraRef.current.takePictureAsync({
-          quality: 0.65,
+          quality: 0.5,
           base64: true,
           shutterSound: false,
         });
