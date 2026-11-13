@@ -46,6 +46,7 @@ export default function ScannerScreen({
   const [manualCode, setManualCode] = useState('');
 
   // Editable Form Fields inside the Reception Modal
+  const [poNumber, setPoNumber] = useState(shipment.poNumber || '');
   const [productName, setProductName] = useState('');
   const [sku, setSku] = useState('');
   const [batchNumber, setBatchNumber] = useState('');
@@ -141,11 +142,14 @@ export default function ScannerScreen({
 
       setScanSource('OCR');
       setRawCode('');
+      if (ocrData.poNumber) {
+        setPoNumber(ocrData.poNumber);
+      }
       setProductName(ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' ? ocrData.medicineName : (matchedItem?.product?.name || primaryItem?.name || ocrData.medicineName || ''));
       setSku(ocrData.sku || matchedItem?.product?.sku || primaryItem?.sku || '');
       setBatchNumber(ocrData.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
       setMfgDate(ocrData.mfgDate || '');
-      setExpiryDate(ocrData.expiryDate || '12/2027');
+      setExpiryDate(ocrData.expiryDate || '');
       setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
       setPrice(ocrData.mrp ? ocrData.mrp.toString() : '');
       setDetectedLines([]);
@@ -217,7 +221,7 @@ export default function ScannerScreen({
       expiryDate: expiryDate.trim() || undefined,
       quantity: numQty,
       price: price.trim() || undefined,
-      poNumber: shipment.poNumber,
+      poNumber: poNumber.trim() || shipment.poNumber,
       barcode: rawCode || undefined,
       confidence: 0.95,
       rawText: detectedLines.join('\n'),
@@ -447,7 +451,7 @@ export default function ScannerScreen({
               <View style={styles.poSummaryCard}>
                 <View style={styles.poSummaryRow}>
                   <Text style={styles.poSummaryLabel}>Purchase Order (PO):</Text>
-                  <Text style={styles.poSummaryValue}>{shipment.poNumber}</Text>
+                  <Text style={styles.poSummaryValue}>{poNumber || shipment.poNumber}</Text>
                 </View>
                 <View style={styles.poSummaryRow}>
                   <Text style={styles.poSummaryLabel}>Supplier / Vendor:</Text>

@@ -11,7 +11,8 @@ NOISE_EXACT = {
 
 NOISE_SUBSTRINGS = [
     'UNTITLED', 'NOTEPAD', 'PADDLE', 'PP-OCR', 'EASYOCR', 'VSCODE',
-    'TASKBAR', 'EXPLORER', 'WINDOWS', 'CHROME', 'EDGE', 'DESKTOP'
+    'TASKBAR', 'EXPLORER', 'WINDOWS', 'CHROME', 'EDGE', 'DESKTOP',
+    'WHATSAPP', 'WNATSAPP', 'LAKSHMI', 'LAKSHML', 'TODAY AT'
 ]
 
 def is_noise_text(text: str) -> bool:
@@ -37,7 +38,7 @@ def clean_label_val(val: str) -> str:
 class PharmaEntityExtractor:
     """
     Robust Pharmaceutical Entity Extractor with Multi-Line Lookahead.
-    Extracts:
+    Extracts live, real values:
       - Product / Medicine Name
       - SKU
       - Purchase Order (PO Number)
@@ -52,13 +53,20 @@ class PharmaEntityExtractor:
         re.IGNORECASE
     )
 
-    # Date regex supporting /, -, ., and OCR comma errors (e.g. 15,08/2026)
-    DATE_REGEX_STR = r'(?:[0-3]?[0-9][\/\-\.,][0-1]?[0-9][\/\-\.,](?:20)?[2-3][0-9]|[0-1]?[0-9][\/\-\.,](?:20)?[2-3][0-9]|[A-Za-z]{3,4}[\/\-\.\s]*(?:20)?[2-3][0-9])'
+    # Universal Date Regex supporting:
+    # 1. DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD,MM/YYYY
+    # 2. YYYY-MM-DD, YYYY/MM/DD
+    # 3. MM/YYYY, MM-YYYY, MM/YY
+    # 4. Mon YYYY (e.g. Aug 2026, 15 Aug 2026)
+    DATE_REGEX_STR = r'(?:(?:20)?[1-4][0-9][\/\-\.][0-1]?[0-9][\/\-\.][0-3]?[0-9]|[0-3]?[0-9][\/\-\.,][0-1]?[0-9][\/\-\.,](?:20)?[1-4][0-9]|[0-1]?[0-9][\/\-\.,](?:20)?[1-4][0-9]|[0-3]?[0-9]?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\/\-\.\s]*(?:20)?[1-4][0-9])'
 
     @classmethod
     def clean_date_str(cls, d: str) -> str:
         d = d.strip()
+        # Normalize commas and dots to slashes
         d = re.sub(r'[,.]', '/', d)
+        # Normalize dashes to slashes if in standard date format
+        d = re.sub(r'-', '/', d)
         d = re.sub(r'/+', '/', d)
         return d
 
@@ -91,8 +99,17 @@ class PharmaEntityExtractor:
 
         n = len(all_lines_text)
 
+        # Helper to inspect up to 4 lookahead lines
+        def get_lookahead_tokens(start_idx: int, max_depth: int = 4) -> List[str]:
+            tokens = []
+            for k in range(start_idx, min(n, start_idx + max_depth)):
+                t = all_lines_text[k].strip()
+                if t and not is_noise_text(t):
+                    tokens.append(t)
+            return tokens
+
         # -------------------------------------------------------------
-        # PASS 1: Multi-Line Lookahead Window (Handles 1, 2, 3 line separations)
+        # PASS 1: Multi-Line Lookahead Window
         # -------------------------------------------------------------
         for i in range(n):
             line = all_lines_text[i]
@@ -100,15 +117,6 @@ class PharmaEntityExtractor:
                 continue
 
             upper = line.upper()
-
-            # Helper to inspect up to 4 lookahead lines
-            def get_lookahead_tokens(start_idx: int, max_depth: int = 4) -> List[str]:
-                tokens = []
-                for k in range(start_idx, min(n, start_idx + max_depth)):
-                    t = all_lines_text[k].strip()
-                    if t and not is_noise_text(t):
-                        tokens.append(t)
-                return tokens
 
             # 1. PRODUCT NAME
             if not extracted_name:
@@ -122,7 +130,6 @@ class PharmaEntityExtractor:
                             if candidate.upper() in {'NAME', 'PRODUCT', 'MEDICINE', 'ITEM'}:
                                 continue
                             extracted_name = candidate
-                            # If next token is dosage/form (e.g. "500mg Tablets"), stitch them
                             idx_in_la = lookahead.index(candidate)
                             if idx_in_la + 1 < len(lookahead) and re.search(r'\b(?:mg|ml|tablets?|capsules?)\b', lookahead[idx_in_la + 1], re.IGNORECASE):
                                 extracted_name = f"{extracted_name} {lookahead[idx_in_la + 1]}"
@@ -164,7 +171,6 @@ class PharmaEntityExtractor:
             # 4. BATCH / LOT NUMBER
             if not extracted_batch:
                 if re.search(r'\b(?:BATCH(?:\s*(?:NO|NUMBER|#))?|B\.?\s*NO|LOT(?:\s*(?:NO|NUMBER|#))?|B\/NO|BN)\b', upper):
-                    # Strip only the batch/lot label prefix (NEVER strip BTH identifier)
                     val = re.sub(r'^(?:BATCH(?:\s*(?:NO|NUMBER|#))?|B\.?\s*NO|LOT(?:\s*(?:NO|NUMBER|#))?|B\/NO|BN)[\s.:;=\-_/]+', '', line, flags=re.IGNORECASE).strip()
                     val = re.sub(r'^(?:NUMBER|NO|NUM|#)[\s.:;=\-_/]*', '', val, flags=re.IGNORECASE).strip()
                     batch_m = re.search(r'([A-Za-z0-9][A-Za-z0-9\-_ /]{2,24})', val)
@@ -184,7 +190,7 @@ class PharmaEntityExtractor:
             if not extracted_mfg:
                 if re.search(r'\b(?:MANUFACTUR(?:ING|E)?(?:\s*DATE)?|MFG(?:\s*DATE)?|MFD|DATE\s*OF\s*MFG)\b', upper):
                     val = re.sub(r'^(?:MANUFACTUR(?:ING|E)?(?:\s*DATE)?|MFG(?:\s*DATE)?|MFD|DATE\s*OF\s*MFG|DATE)[\s.:;=\-_/]*', '', line, flags=re.IGNORECASE).strip()
-                    d_m = re.search(cls.DATE_REGEX_STR, val)
+                    d_m = re.search(cls.DATE_REGEX_STR, val, re.IGNORECASE)
                     if d_m:
                         extracted_mfg = cls.clean_date_str(d_m.group(0))
                     else:
@@ -192,7 +198,7 @@ class PharmaEntityExtractor:
                         for candidate in lookahead:
                             if candidate.upper() in {'DATE', 'DT', 'OF'}:
                                 continue
-                            d_m2 = re.search(cls.DATE_REGEX_STR, candidate)
+                            d_m2 = re.search(cls.DATE_REGEX_STR, candidate, re.IGNORECASE)
                             if d_m2:
                                 extracted_mfg = cls.clean_date_str(d_m2.group(0))
                                 break
@@ -201,7 +207,7 @@ class PharmaEntityExtractor:
             if not extracted_expiry:
                 if re.search(r'\b(?:EXPIR(?:Y|ATION)?(?:\s*DATE)?|EXP(?:\s*DATE)?|USE\s*BY|USE\s*BEFORE)\b', upper):
                     val = re.sub(r'^(?:EXPIR(?:Y|ATION)?(?:\s*DATE)?|EXP(?:\s*DATE)?|USE\s*BY|USE\s*BEFORE|DATE)[\s.:;=\-_/]*', '', line, flags=re.IGNORECASE).strip()
-                    d_m = re.search(cls.DATE_REGEX_STR, val)
+                    d_m = re.search(cls.DATE_REGEX_STR, val, re.IGNORECASE)
                     if d_m:
                         extracted_expiry = cls.clean_date_str(d_m.group(0))
                     else:
@@ -209,27 +215,31 @@ class PharmaEntityExtractor:
                         for candidate in lookahead:
                             if candidate.upper() in {'DATE', 'DT'}:
                                 continue
-                            d_m2 = re.search(cls.DATE_REGEX_STR, candidate)
+                            d_m2 = re.search(cls.DATE_REGEX_STR, candidate, re.IGNORECASE)
                             if d_m2:
                                 extracted_expiry = cls.clean_date_str(d_m2.group(0))
                                 break
 
             # 7. PRICE / MRP / RATE
             if extracted_mrp is None:
-                if re.search(r'\b(?:PRICE\s*/\s*MRP|M\.?R\.?P|PRICE|RATE|RS\.?|INR)\b', upper):
-                    val = re.sub(r'^(?:PRICE\s*/\s*MRP|M\.?R\.?P|PRICE|RATE|RS\.?|INR)[\s.:₹;=\-_/]*', '', line, flags=re.IGNORECASE).strip()
+                if re.search(r'\b(?:PRICE\s*/\s*MRP|M\.?R\.?P|PRICE|RATE|\bRS\b|INR|₹)\b', upper):
+                    val = re.sub(r'^(?:PRICE\s*/\s*MRP|M\.?R\.?P|PRICE|RATE|\bRS\b|INR|₹)[\s.:₹;=\-_/]*', '', line, flags=re.IGNORECASE).strip()
                     val = re.sub(r'^[\/ ]*MRP[\s.:₹;=\-_/]*', '', val, flags=re.IGNORECASE).strip()
-                    val = re.sub(r'^(?:RS\.?|INR|₹)[\s.:;=\-_/]*', '', val, flags=re.IGNORECASE).strip()
-                    mrp_m = re.search(r'([0-9]+(?:\.[0-9]{1,2})?)', val)
-                    if mrp_m:
-                        try:
-                            extracted_mrp = float(mrp_m.group(1))
-                        except ValueError:
-                            pass
-                    else:
+                    val = re.sub(r'^(?:\bRS\b\.?|INR|₹)[\s.:;=\-_/]*', '', val, flags=re.IGNORECASE).strip()
+                    # Do not match timestamp like 3:03 pm
+                    if not re.search(r'\b(?:pm|am|hours|hrs|min)\b', val, re.IGNORECASE):
+                        mrp_m = re.search(r'([0-9]+(?:\.[0-9]{1,2})?)', val)
+                        if mrp_m:
+                            try:
+                                extracted_mrp = float(mrp_m.group(1))
+                            except ValueError:
+                                pass
+                    if extracted_mrp is None:
                         lookahead = get_lookahead_tokens(i + 1, 4)
                         for candidate in lookahead:
                             if candidate.upper() in {'/', 'MRP', 'PRICE', 'RATE', 'RS', 'RS.', 'INR', '₹'}:
+                                continue
+                            if re.search(r'\b(?:pm|am|hours|hrs|min)\b', candidate, re.IGNORECASE):
                                 continue
                             cand_clean = re.sub(r'^[^\d.]+', '', candidate).strip()
                             mrp_m2 = re.search(r'([0-9]+(?:\.[0-9]{1,2})?)', cand_clean)
@@ -295,13 +305,16 @@ class PharmaEntityExtractor:
             if em:
                 extracted_expiry = cls.clean_date_str(em.group(1))
 
-        # MRP / Rate Fallback (handles "Price / MRP 145.50", "MRP Rs. 145.50", "Rate: 145.50")
+        # MRP / Rate Fallback (requires explicit indicator and ignores timestamps)
         if extracted_mrp is None:
-            mrp_regex = re.compile(r'\b(?:PRICE\s*/\s*MRP|M\.?R\.?P|PRICE|RATE|RS\.?|INR)[\s.:₹#\-/]+(?:RS\.?\s*)?([0-9]+(?:\.[0-9]{1,2})?)', re.IGNORECASE)
+            mrp_regex = re.compile(r'\b(?:PRICE\s*/\s*MRP|M\.?R\.?P|PRICE|RATE|\bRS\b|INR)[\s.:₹#\-/]+(?:RS\.?\s*)?([0-9]+(?:\.[0-9]{1,2})?)', re.IGNORECASE)
             mmrp = mrp_regex.search(combined_text)
             if mmrp:
                 try:
-                    extracted_mrp = float(mmrp.group(1))
+                    val = float(mmrp.group(1))
+                    # Avoid 0 or tiny non-prices
+                    if val > 0:
+                        extracted_mrp = val
                 except ValueError:
                     pass
 
