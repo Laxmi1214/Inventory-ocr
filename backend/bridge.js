@@ -516,6 +516,125 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
+  // Route 5.5: Dispatch Item (Pick & Pack Outbound) in PostgreSQL
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/inventory/dispatch-item') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const {
+        productName,
+        sku,
+        batchNumber,
+        quantity,
+        orderNumber,
+        notes,
+        userId
+      } = body;
+
+      const numQty = parseInt(quantity, 10);
+      if (isNaN(numQty) || numQty <= 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Valid dispatch quantity greater than 0 is required' }));
+      }
+
+      const cleanProdName = (productName || '').trim();
+      const cleanSku = (sku || '').trim();
+      const cleanBatch = (batchNumber || '').trim().toUpperCase();
+
+      // 1. Find Product
+      let prodRows = await sql`
+        SELECT id, sku, name FROM public.products
+        WHERE LOWER(sku) = ${cleanSku.toLowerCase()} OR LOWER(name) = ${cleanProdName.toLowerCase()}
+        LIMIT 1
+      `;
+      if (prodRows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: `Product "${cleanProdName || cleanSku}" not found in database.` }));
+      }
+      const product = prodRows[0];
+
+      // 2. Find Batch
+      let batchRows = await sql`
+        SELECT id, batch_number, expiry_date, status FROM public.batches
+        WHERE product_id = ${product.id} AND UPPER(batch_number) = ${cleanBatch}
+        LIMIT 1
+      `;
+      if (batchRows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: `Batch "${cleanBatch}" of ${product.name} not found in database.` }));
+      }
+      const batch = batchRows[0];
+
+      // 3. Find and check Inventory stock
+      let invRows = await sql`
+        SELECT id, quantity, location_code FROM public.inventory
+        WHERE product_id = ${product.id} AND batch_id = ${batch.id}
+        LIMIT 1
+      `;
+      if (invRows.length === 0 || invRows[0].quantity <= 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: `No available stock for batch ${cleanBatch} of ${product.name}.` }));
+      }
+      const inventoryRow = invRows[0];
+      if (inventoryRow.quantity < numQty) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: false,
+          error: `Insufficient stock! Requested: ${numQty}, Available: ${inventoryRow.quantity}`
+        }));
+      }
+
+      // 4. Decrement Inventory
+      const updatedInv = await sql`
+        UPDATE public.inventory
+        SET quantity = quantity - ${numQty}, updated_at = NOW()
+        WHERE id = ${inventoryRow.id}
+        RETURNING id, product_id, batch_id, location_code, quantity
+      `;
+
+      // 5. User verification for foreign key
+      let validUserId = null;
+      if (userId) {
+        const userCheck = await sql`SELECT id FROM public.users WHERE id = ${userId} OR LOWER(username) = ${String(userId).toLowerCase()} LIMIT 1`;
+        if (userCheck.length > 0) validUserId = userCheck[0].id;
+      }
+      if (!validUserId) {
+        const anyUser = await sql`SELECT id FROM public.users LIMIT 1`;
+        if (anyUser.length > 0) validUserId = anyUser[0].id;
+      }
+
+      // 6. Record OUTBOUND Transaction
+      const noteText = notes || `Outbound dispatch: ${orderNumber || 'Order'} - ${numQty} units of ${product.name} (Batch: ${cleanBatch})`;
+      const txRows = await sql`
+        INSERT INTO public.inventory_transactions (product_id, batch_id, type, quantity, notes, created_by)
+        VALUES (${product.id}, ${batch.id}, 'OUTBOUND', ${numQty}, ${noteText}, ${validUserId})
+        RETURNING id, product_id, batch_id, type, quantity, notes, created_by, created_at
+      `;
+
+      console.log(`[DB DISPATCH SUCCESS] Dispatched ${numQty} units of ${product.name} (Batch: ${cleanBatch}). Remaining stock: ${updatedInv[0].quantity}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        message: 'Stock successfully dispatched from PostgreSQL database',
+        product,
+        batch,
+        inventory: updatedInv[0],
+        transaction: txRows[0]
+      }));
+    } catch (dispErr) {
+      console.error('[DB DISPATCH ERROR]:', dispErr);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: dispErr.message || 'Database dispatch transaction failed' }));
+    }
+  }
+
+  // -------------------------------------------------------------
   // Route 6: Get Live Inventory Metrics from PostgreSQL
   // -------------------------------------------------------------
   if (req.method === 'GET' && urlPath === '/api/v1/inventory/metrics') {

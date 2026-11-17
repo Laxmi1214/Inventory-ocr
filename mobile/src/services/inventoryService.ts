@@ -284,6 +284,35 @@ export async function recordMedicineMovement(params: {
       } finally {
         clearTimeout(timeoutId);
       }
+    } else if (type === 'OUTBOUND') {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}/api/v1/inventory/dispatch-item`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            productName: cleanMedName,
+            sku: sku || undefined,
+            batchNumber: cleanBatch,
+            quantity,
+            notes,
+            userId,
+          }),
+          signal: controller.signal,
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success) {
+            console.log('[INVENTORY DB] Outbound dispatch committed to PostgreSQL successfully:', json.product?.name);
+          }
+        }
+      } catch (dbErr: any) {
+        console.warn('[INVENTORY DB] PostgreSQL dispatch notice:', dbErr.message);
+      } finally {
+        clearTimeout(timeoutId);
+      }
     }
 
     // 2. Update local stock records for instantaneous responsive UI
