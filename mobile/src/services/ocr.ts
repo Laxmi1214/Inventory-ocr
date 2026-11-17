@@ -4,7 +4,7 @@
  */
 
 export interface ExtractedLabelData {
-  source: 'BARCODE' | 'QR_CODE' | 'MANUAL';
+  source: 'BARCODE' | 'QR_CODE' | 'OCR' | 'MANUAL';
   barcode?: string;
   barcodeType?: string;
   productName?: string;

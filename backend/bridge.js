@@ -35,7 +35,9 @@ try {
 
 const PORT = 8080;
 const PYTHON_TARGET_PORT = 8001;
-const PYTHON_EXE = 'C:\\Users\\kjabh\\AppData\\Local\\Programs\\Python\\Python311\\python.exe';
+const localVenvPython = path.resolve(__dirname, '..', 'ocr-service', '.venv', 'Scripts', 'python.exe');
+const uvPython = 'C:\\Users\\Admin\\AppData\\Roaming\\uv\\python\\cpython-3.11.18-windows-x86_64-none\\python.exe';
+const PYTHON_EXE = fs.existsSync(localVenvPython) ? localVenvPython : (fs.existsSync(uvPython) ? uvPython : 'python');
 
 let pythonProc = null;
 
@@ -512,6 +514,60 @@ const server = http.createServer(async (req, res) => {
       console.error('[DB RECEIVE ERROR]:', recErr);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: recErr.message || 'Database receiving transaction failed' }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 5.2: Flag Purchase Order Discrepancy & Quarantine in DB
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/receiving/flag-discrepancy') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const { poNumber, itemId, reasons = [], notes } = body;
+
+      if (!poNumber) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'PO Number is required' }));
+      }
+
+      const discrepancyNote = ` [DISCREPANCY: ${reasons.join('; ')}${notes ? ' - ' + notes : ''}]`;
+
+      // Update PO status to DISCREPANCY
+      await sql`
+        UPDATE public.inbound_shipments
+        SET status = 'DISCREPANCY',
+            notes = COALESCE(notes, '') || ${discrepancyNote},
+            updated_at = NOW()
+        WHERE LOWER(po_number) = ${poNumber.trim().toLowerCase()}
+      `;
+
+      if (itemId) {
+        await sql`
+          UPDATE public.inbound_shipment_items
+          SET status = 'DISCREPANCY',
+              updated_at = NOW()
+          WHERE id = ${itemId}
+        `;
+      }
+
+      console.log(`[DISCREPANCY LOGGED] PO ${poNumber} marked as DISCREPANCY: ${reasons.join(', ')}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        message: `PO ${poNumber} marked as DISCREPANCY. Goods quarantined.`,
+        poNumber,
+        reasons
+      }));
+    } catch (discErr) {
+      console.error('[DB DISCREPANCY ERROR]:', discErr);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: discErr.message || 'Failed to flag discrepancy' }));
     }
   }
 

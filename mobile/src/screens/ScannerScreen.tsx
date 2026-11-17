@@ -644,8 +644,8 @@ export default function ScannerScreen({
                 onPress={handleConfirmReceiving}
                 activeOpacity={0.85}
               >
-                <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
-                <Text style={styles.validateButtonText}>Confirm & Receive</Text>
+                <Ionicons name="shield-checkmark" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Text style={styles.validateButtonText}>Proceed to PO Validation</Text>
               </TouchableOpacity>
             </View>
           </View>

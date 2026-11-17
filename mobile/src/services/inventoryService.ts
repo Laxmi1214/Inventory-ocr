@@ -108,7 +108,7 @@ const INITIAL_TRANSACTIONS: MedicineTransaction[] = [
   },
 ];
 
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
 
 /**
  * Fetch inventory metrics: Total In Stock, Total Income (Inbound), Total Go (Outbound)

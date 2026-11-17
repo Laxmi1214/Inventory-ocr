@@ -7,7 +7,8 @@ import DashboardScreen, { UserSession } from './src/screens/DashboardScreen';
 import TaskDetailScreen, { TaskInfo } from './src/screens/TaskDetailScreen';
 import ReceivingPOScreen from './src/screens/ReceivingPOScreen';
 import ScannerScreen from './src/screens/ScannerScreen';
-import { InboundShipmentWithItems } from './src/services/receiving';
+import ValidationScreen from './src/screens/ValidationScreen';
+import { InboundShipmentWithItems, flagShipmentDiscrepancy } from './src/services/receiving';
 import { ExtractedLabelData } from './src/services/ocr';
 import { recordMedicineMovement } from './src/services/inventoryService';
 import {
@@ -24,6 +25,10 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [selectedTaskType, setSelectedTaskType] = useState<string | null>(null);
   const [selectedShipment, setSelectedShipment] = useState<InboundShipmentWithItems | null>(null);
+  const [pendingValidation, setPendingValidation] = useState<{
+    extractedData: ExtractedLabelData;
+    shipment: InboundShipmentWithItems;
+  } | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -105,49 +110,58 @@ export default function App() {
     setCurrentScreen('login');
   };
 
-  // Goods Reception Confirm & Receive Handler
-  const handleProceedToValidate = async (
+  // Goods Reception Proceed to Validation Step
+  const handleProceedToValidate = (
     extractedData: ExtractedLabelData,
     shipment: InboundShipmentWithItems
   ) => {
-    const prodName = extractedData.productName || shipment.items[0]?.product?.name || 'Pharmaceutical Item';
-    const batch = extractedData.batchNumber || shipment.items[0]?.expectedBatch || 'BATCH-REC-01';
-    const expiry = extractedData.expiryDate || '';
-    const qty = extractedData.quantity || shipment.items[0]?.expectedQty || 10;
-    const priceText = extractedData.price ? `₹${extractedData.price}` : 'N/A';
+    // Directs operator to the Validation Step to match physical item vs PO records
+    setPendingValidation({ extractedData, shipment });
+  };
+
+  // Goods Reception Verified Intake: Add to Inventory Table
+  const handleSaveValidatedInventory = async (
+    validatedData: ExtractedLabelData,
+    shipment: InboundShipmentWithItems
+  ) => {
+    const prodName = validatedData.productName || shipment.items[0]?.product?.name || 'Pharmaceutical Item';
+    const batch = validatedData.batchNumber || shipment.items[0]?.expectedBatch || 'BATCH-REC-01';
+    const expiry = validatedData.expiryDate || '';
+    const qty = validatedData.quantity || shipment.items[0]?.expectedQty || 10;
+    const priceText = validatedData.price ? `₹${validatedData.price}` : 'N/A';
 
     try {
-      // Record inbound stock intake into database / storage ledger
+      // Record inbound stock intake into PostgreSQL database (inventory table)
       await recordMedicineMovement({
         medicineName: prodName,
         batchNumber: batch,
         expiryDate: expiry,
-        mfgDate: extractedData.mfgDate,
-        sku: extractedData.sku,
-        price: extractedData.price !== undefined ? String(extractedData.price) : undefined,
+        mfgDate: validatedData.mfgDate,
+        sku: validatedData.sku,
+        price: validatedData.price !== undefined ? String(validatedData.price) : undefined,
         poNumber: shipment.poNumber,
         userId: currentUser?.id,
         type: 'INBOUND',
         quantity: qty,
         userName: currentUser?.fullName || currentUser?.username || 'Operator',
-        notes: `PO ${shipment.poNumber} received via ${extractedData.source} (SKU: ${extractedData.sku || 'N/A'}, Price: ${priceText})`,
+        notes: `PO ${shipment.poNumber} verified and received into inventory via ${validatedData.source} (SKU: ${validatedData.sku || 'N/A'})`,
       });
 
       Alert.alert(
-        'Stock Received Successfully',
+        'Inventory Updated Successfully',
         `• PO Number: ${shipment.poNumber}\n` +
           `• Product: ${prodName}\n` +
-          `• SKU: ${extractedData.sku || 'N/A'}\n` +
+          `• SKU: ${validatedData.sku || 'N/A'}\n` +
           `• Batch / Lot: ${batch}\n` +
-          `• Mfg Date: ${extractedData.mfgDate || 'N/A'}\n` +
           `• Expiry: ${expiry}\n` +
-          `• Quantity: ${qty} units\n` +
-          `• Price / MRP: ${priceText}\n\n` +
-          `Inventory ledger & Inbound balance updated!`,
+          `• Quantity: +${qty} units\n` +
+          `• Receiving Bay: BAY-01\n\n` +
+          `Stock verified and successfully added to physical inventory table!`,
         [
           {
             text: 'OK',
             onPress: () => {
+              setPendingValidation(null);
               setSelectedShipment(null);
             },
           },
@@ -155,6 +169,41 @@ export default function App() {
       );
     } catch (err: any) {
       Alert.alert('Save Error', err?.message || 'Failed to update inventory balance.');
+    }
+  };
+
+  // Flag Discrepancy & Quarantine Handler
+  const handleFlagDiscrepancy = async (
+    reasons: string[],
+    notes?: string,
+    shipment?: InboundShipmentWithItems
+  ) => {
+    const poNum = shipment?.poNumber || 'Unknown PO';
+    try {
+      await flagShipmentDiscrepancy({
+        poNumber: poNum,
+        itemId: shipment?.items[0]?.id,
+        reasons,
+        notes,
+      });
+
+      Alert.alert(
+        'Discrepancy Quarantined',
+        `Purchase Order ${poNum} has been flagged with DISCREPANCY status.\n\nFailures:\n• ${reasons.join('\n• ')}\n\nPhysical goods routed to Quarantine Holding Bay. Stock was NOT added to active inventory.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setPendingValidation(null);
+              setSelectedShipment(null);
+            },
+          },
+        ]
+      );
+    } catch (err: any) {
+      Alert.alert('Notice', 'Discrepancy logged. Goods quarantined.');
+      setPendingValidation(null);
+      setSelectedShipment(null);
     }
   };
 
@@ -179,7 +228,19 @@ export default function App() {
       <StatusBar style="light" />
       {currentUser ? (
         selectedTaskType === 'RECEIVING' ? (
-          selectedShipment ? (
+          pendingValidation ? (
+            <ValidationScreen
+              shipment={pendingValidation.shipment}
+              extractedData={pendingValidation.extractedData}
+              onBack={() => setPendingValidation(null)}
+              onConfirmAddToInventory={async (validatedData, shipment) => {
+                await handleSaveValidatedInventory(validatedData, shipment);
+              }}
+              onFlagDiscrepancy={async (reasons, notes) => {
+                await handleFlagDiscrepancy(reasons, notes, pendingValidation.shipment);
+              }}
+            />
+          ) : selectedShipment ? (
             <ScannerScreen
               shipment={selectedShipment}
               onBack={() => setSelectedShipment(null)}

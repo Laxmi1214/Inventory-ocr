@@ -86,7 +86,39 @@ const FALLBACK_SHIPMENTS: InboundShipmentWithItems[] = [
   },
 ];
 
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+
+/**
+ * Flag a PO or Item as DISCREPANCY in PostgreSQL Database
+ */
+export async function flagShipmentDiscrepancy(params: {
+  poNumber: string;
+  itemId?: string;
+  reasons: string[];
+  notes?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/api/v1/receiving/flag-discrepancy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      return { success: json.success };
+    }
+    return { success: false, error: `Failed to flag discrepancy: status ${res.status}` };
+  } catch (err: any) {
+    console.warn('[RECEIVING] Discrepancy flagging notice:', err.message);
+    return { success: false, error: err.message };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 /**
  * Fetch active Inbound Shipments (PO list) with expected medicines from PostgreSQL Database
