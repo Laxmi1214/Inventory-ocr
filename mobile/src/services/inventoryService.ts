@@ -108,10 +108,41 @@ const INITIAL_TRANSACTIONS: MedicineTransaction[] = [
   },
 ];
 
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
+
 /**
  * Fetch inventory metrics: Total In Stock, Total Income (Inbound), Total Go (Outbound)
+ * Connects directly to PostgreSQL Database Gateway on Node bridge
  */
 export async function getInventoryMetrics(): Promise<InventoryMetrics> {
+  // 1. Fetch live metrics from PostgreSQL Database Gateway
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch(`${BACKEND_BASE_URL}/api/v1/inventory/metrics`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && json.metrics) {
+        return {
+          totalInStock: json.metrics.totalInStock,
+          totalIncome: json.metrics.totalIncome,
+          totalGo: json.metrics.totalGo,
+          medicineCount: json.metrics.medicineCount,
+        };
+      }
+    }
+  } catch (apiErr: any) {
+    console.warn('[INVENTORY] Live DB metrics fetch notice:', apiErr.message);
+  }
+
+  // 2. Local safeStorage fallback
   try {
     const txRaw = await safeStorage.getItem(STORAGE_TRANSACTIONS_KEY);
     let transactions: MedicineTransaction[] = txRaw ? JSON.parse(txRaw) : INITIAL_TRANSACTIONS;
@@ -147,10 +178,10 @@ export async function getInventoryMetrics(): Promise<InventoryMetrics> {
   } catch (err) {
     console.warn('Error reading inventory metrics:', err);
     return {
-      totalInStock: 950,
-      totalIncome: 650,
-      totalGo: 20,
-      medicineCount: 3,
+      totalInStock: 0,
+      totalIncome: 0,
+      totalGo: 0,
+      medicineCount: 0,
     };
   }
 }
@@ -171,20 +202,40 @@ export async function getRecentTransactions(): Promise<MedicineTransaction[]> {
 
 /**
  * Record a new medicine transaction:
- * - INBOUND ("Income"): increases stock
+ * - INBOUND ("Income"): increases stock in PostgreSQL database & safeStorage
  * - OUTBOUND ("Go"): decreases stock
  */
 export async function recordMedicineMovement(params: {
   medicineName: string;
   batchNumber: string;
   expiryDate: string;
+  mfgDate?: string;
+  sku?: string;
+  price?: string;
+  poNumber?: string;
+  userId?: string;
+  locationCode?: string;
   type: 'INBOUND' | 'OUTBOUND';
   quantity: number;
   userName?: string;
   notes?: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    const { medicineName, batchNumber, expiryDate, type, quantity, userName, notes } = params;
+    const {
+      medicineName,
+      batchNumber,
+      expiryDate,
+      mfgDate,
+      sku,
+      price,
+      poNumber,
+      userId,
+      locationCode,
+      type,
+      quantity,
+      userName,
+      notes,
+    } = params;
 
     if (!medicineName || !medicineName.trim()) {
       return { success: false, error: 'Medicine name is required.' };
@@ -196,12 +247,48 @@ export async function recordMedicineMovement(params: {
       return { success: false, error: 'Quantity must be greater than zero.' };
     }
 
-    // 1. Update stock records
-    const stockRaw = await safeStorage.getItem(STORAGE_INVENTORY_KEY);
-    let stockItems: any[] = stockRaw ? JSON.parse(stockRaw) : [...INITIAL_STOCK];
-
     const cleanBatch = batchNumber.trim().toUpperCase();
     const cleanMedName = medicineName.trim();
+
+    // 1. Commit directly to PostgreSQL Database Gateway if INBOUND
+    if (type === 'INBOUND') {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
+
+        const res = await fetch(`${BACKEND_BASE_URL}/api/v1/receiving/receive-item`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            poNumber,
+            productName: cleanMedName,
+            sku: sku || `MED-${cleanMedName.substring(0, 4).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
+            batchNumber: cleanBatch,
+            mfgDate,
+            expiryDate,
+            quantity,
+            price,
+            userId,
+            locationCode: locationCode || 'BAY-01',
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success) {
+            console.log('[INVENTORY DB] Item committed to PostgreSQL successfully:', json.product?.name);
+          }
+        }
+      } catch (dbErr: any) {
+        console.warn('[INVENTORY DB] PostgreSQL gateway commit notice:', dbErr.message);
+      }
+    }
+
+    // 2. Update local stock records for instantaneous responsive UI
+    const stockRaw = await safeStorage.getItem(STORAGE_INVENTORY_KEY);
+    let stockItems: any[] = stockRaw ? JSON.parse(stockRaw) : [...INITIAL_STOCK];
 
     const existingIndex = stockItems.findIndex(
       (item) =>
@@ -231,7 +318,7 @@ export async function recordMedicineMovement(params: {
         stockItems.push({
           id: `MED-${Date.now()}`,
           name: cleanMedName,
-          sku: `SKU-${cleanMedName.substring(0, 4).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
+          sku: sku || `SKU-${cleanMedName.substring(0, 4).toUpperCase()}-${Math.floor(100 + Math.random() * 900)}`,
           batchNumber: cleanBatch,
           expiryDate: expiryDate || '12/2027',
           quantity,
@@ -241,7 +328,7 @@ export async function recordMedicineMovement(params: {
 
     await safeStorage.setItem(STORAGE_INVENTORY_KEY, JSON.stringify(stockItems));
 
-    // 2. Append transaction record
+    // 3. Append local transaction record
     const txRaw = await safeStorage.getItem(STORAGE_TRANSACTIONS_KEY);
     let transactions: MedicineTransaction[] = txRaw ? JSON.parse(txRaw) : [...INITIAL_TRANSACTIONS];
 
@@ -254,36 +341,11 @@ export async function recordMedicineMovement(params: {
       quantity,
       userName: userName || 'Warehouse Staff',
       createdAt: new Date().toISOString(),
-      notes: notes || (type === 'INBOUND' ? 'PaddleOCR scanned intake' : 'Outbound dispatch'),
+      notes: notes || (type === 'INBOUND' ? 'Goods Reception verified intake' : 'Outbound dispatch'),
     };
 
     transactions.push(newTx);
     await safeStorage.setItem(STORAGE_TRANSACTIONS_KEY, JSON.stringify(transactions));
-
-    // 3. Supabase Cloud Sync if configured
-    if (isSupabaseConfigured) {
-      try {
-        // Query product id
-        const { data: prodData } = await supabase
-          .from('products')
-          .select('id')
-          .ilike('name', `%${cleanMedName}%`)
-          .limit(1)
-          .maybeSingle();
-
-        if (prodData?.id) {
-          await supabase.from('inventory_transactions').insert({
-            product_id: prodData.id,
-            type,
-            quantity,
-            notes: newTx.notes,
-            created_at: newTx.createdAt,
-          });
-        }
-      } catch (cloudErr) {
-        console.warn('Cloud transaction sync warning:', cloudErr);
-      }
-    }
 
     return { success: true };
   } catch (err: any) {

@@ -109,15 +109,19 @@ export default function ScannerScreen({
           quality: 0.5,
           base64: true,
           shutterSound: false,
+          skipProcessing: true,
         });
       } catch (firstErr) {
-        console.warn('Initial capture error, retrying:', firstErr);
-        await new Promise((r) => setTimeout(r, 200));
-        photo = await cameraRef.current.takePictureAsync({
-          quality: 0.5,
-          base64: true,
-          shutterSound: false,
-        });
+        console.warn('Initial capture notice, retrying with camera sync:', firstErr);
+        await new Promise((r) => setTimeout(r, 300));
+        if (cameraRef.current) {
+          photo = await cameraRef.current.takePictureAsync({
+            quality: 0.5,
+            base64: true,
+            shutterSound: false,
+            skipProcessing: true,
+          });
+        }
       }
 
       let ocrData;
@@ -126,7 +130,7 @@ export default function ScannerScreen({
       } else if (photo?.uri) {
         ocrData = await sendImageToPaddleOcr(photo.uri);
       } else {
-        Alert.alert('Camera Notice', 'Please hold camera steady and tap again.');
+        Alert.alert('Camera Notice', 'Please hold camera steady and tap Read Text again.');
         return;
       }
 
@@ -145,11 +149,19 @@ export default function ScannerScreen({
       if (ocrData.poNumber) {
         setPoNumber(ocrData.poNumber);
       }
-      setProductName(ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' ? ocrData.medicineName : (matchedItem?.product?.name || primaryItem?.name || ocrData.medicineName || ''));
-      setSku(ocrData.sku || matchedItem?.product?.sku || primaryItem?.sku || '');
-      setBatchNumber(ocrData.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
-      setMfgDate(ocrData.mfgDate || '');
-      setExpiryDate(ocrData.expiryDate || '');
+
+      const detectedName = ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' && ocrData.medicineName !== 'No text detected' ? ocrData.medicineName : '';
+      const finalName = detectedName || matchedItem?.product?.name || primaryItem?.name || '';
+      const finalSku = ocrData.sku || matchedItem?.product?.sku || primaryItem?.sku || '';
+      const finalBatch = ocrData.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '';
+      const finalMfg = ocrData.mfgDate || '';
+      const finalExp = ocrData.expiryDate || '';
+
+      setProductName(finalName);
+      setSku(finalSku);
+      setBatchNumber(finalBatch);
+      setMfgDate(finalMfg);
+      setExpiryDate(finalExp);
       setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
       setPrice(ocrData.mrp ? ocrData.mrp.toString() : '');
       setDetectedLines([]);

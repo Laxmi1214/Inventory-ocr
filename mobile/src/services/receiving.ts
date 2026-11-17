@@ -86,66 +86,83 @@ const FALLBACK_SHIPMENTS: InboundShipmentWithItems[] = [
   },
 ];
 
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
+
 /**
- * Fetch active Inbound Shipments (PO list) with expected medicines from Supabase
+ * Fetch active Inbound Shipments (PO list) with expected medicines from PostgreSQL Database
  */
 export async function getInboundShipments(): Promise<{
   data: InboundShipmentWithItems[];
   source: 'database' | 'fallback';
   error?: string;
 }> {
-  if (!isSupabaseConfigured) {
-    return { data: FALLBACK_SHIPMENTS, source: 'fallback' };
-  }
-
+  // 1. Primary Source: Node Gateway connected directly to PostgreSQL DB
   try {
-    const { data, error } = await supabase
-      .from('inbound_shipments')
-      .select('*, items:inbound_shipment_items(*, product:products(*))')
-      .order('created_at', { ascending: false });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-    if (error) {
-      console.warn('Supabase fetch inbound_shipments error:', error.message);
-      return { data: FALLBACK_SHIPMENTS, source: 'fallback', error: error.message };
+    const res = await fetch(`${BACKEND_BASE_URL}/api/v1/receiving/shipments`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.shipments) && json.shipments.length > 0) {
+        console.log(`[RECEIVING] Loaded ${json.shipments.length} real PO shipments from PostgreSQL DB`);
+        return { data: json.shipments, source: 'database' };
+      }
     }
-
-    if (!data || data.length === 0) {
-      return { data: FALLBACK_SHIPMENTS, source: 'fallback' };
-    }
-
-    // Map database snake_case to typed camelCase
-    const mapped: InboundShipmentWithItems[] = data.map((s: any) => ({
-      id: s.id,
-      poNumber: s.po_number,
-      supplierName: s.supplier_name,
-      status: s.status || 'PENDING',
-      expectedDeliveryDate: s.expected_delivery_date,
-      notes: s.notes,
-      items: (s.items || []).map((i: any) => ({
-        id: i.id,
-        shipmentId: i.shipment_id,
-        productId: i.product_id,
-        expectedBatch: i.expected_batch,
-        expectedQty: i.expected_qty,
-        receivedQty: i.received_qty || 0,
-        status: i.status || 'PENDING',
-        product: i.product
-          ? {
-              id: i.product.id,
-              sku: i.product.sku,
-              name: i.product.name,
-              barcode: i.product.barcode,
-              packSize: i.product.pack_size,
-              unit: i.product.unit,
-            }
-          : undefined,
-      })),
-    }));
-
-    return { data: mapped, source: 'database' };
-  } catch (err: any) {
-    console.warn('Exception during getInboundShipments:', err);
-    return { data: FALLBACK_SHIPMENTS, source: 'fallback', error: err?.message };
+  } catch (apiErr: any) {
+    console.warn('[RECEIVING] Node DB gateway fetch notice:', apiErr.message);
   }
+
+  // 2. Secondary Source: Direct Supabase Client if configured
+  if (isSupabaseConfigured) {
+    try {
+      const { data, error } = await supabase
+        .from('inbound_shipments')
+        .select('*, items:inbound_shipment_items(*, product:products(*))')
+        .order('created_at', { ascending: false });
+
+      if (!error && data && data.length > 0) {
+        const mapped: InboundShipmentWithItems[] = data.map((s: any) => ({
+          id: s.id,
+          poNumber: s.po_number,
+          supplierName: s.supplier_name,
+          status: s.status || 'PENDING',
+          expectedDeliveryDate: s.expected_delivery_date,
+          notes: s.notes,
+          items: (s.items || []).map((i: any) => ({
+            id: i.id,
+            shipmentId: i.shipment_id,
+            productId: i.product_id,
+            expectedBatch: i.expected_batch,
+            expectedQty: i.expected_qty,
+            receivedQty: i.received_qty || 0,
+            status: i.status || 'PENDING',
+            product: i.product
+              ? {
+                  id: i.product.id,
+                  sku: i.product.sku,
+                  name: i.product.name,
+                  barcode: i.product.barcode,
+                  packSize: i.product.pack_size,
+                  unit: i.product.unit,
+                }
+              : undefined,
+          })),
+        }));
+        return { data: mapped, source: 'database' };
+      }
+    } catch (supErr: any) {
+      console.warn('Supabase direct query notice:', supErr.message);
+    }
+  }
+
+  // 3. Fallback only if offline / unreachable
+  return { data: FALLBACK_SHIPMENTS, source: 'fallback' };
 }
 

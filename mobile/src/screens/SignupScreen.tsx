@@ -101,15 +101,6 @@ export default function SignupScreen({ onNavigateToLogin, onSignupSuccess }: Sig
             {
               text: 'Go to Sign In',
               onPress: () => {
-                if (onSignupSuccess) {
-                  onSignupSuccess({
-                    id: user.id,
-                    username: user.username,
-                    fullName: user.username,
-                    email: user.email,
-                    role: user.role,
-                  });
-                }
                 onNavigateToLogin();
               },
             },

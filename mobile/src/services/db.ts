@@ -199,6 +199,9 @@ export async function registerUser(
     }
 
     // 3. Post to PostgreSQL Backend Auth Gateway
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
     try {
       const response = await fetch(`${AUTH_API_URL}/api/v1/auth/register`, {
         method: 'POST',
@@ -209,7 +212,9 @@ export async function registerUser(
           password: password,
           role: role || 'OPERATOR',
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       const data = await response.json();
 
@@ -232,29 +237,11 @@ export async function registerUser(
 
       return { user: registeredUser };
     } catch (apiErr: any) {
-      console.warn('[DB REGISTER API NOTICE] Falling back to offline registration:', apiErr.message);
-
-      // Offline fallback: Check local storage
-      const existingUsers = await getAllUsers();
-      if (existingUsers.some(u => u.email.trim().toLowerCase() === cleanEmail)) {
-        return { error: 'Mail id already exists' };
-      }
-
-      const uniqueId = `USR-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
-      const now = new Date().toISOString();
-
-      const newUser: UserRecord = {
-        id: uniqueId,
-        username: username.trim(),
-        email: cleanEmail,
-        password: password,
-        role: role || 'OPERATOR',
-        createdAt: now,
-        updatedAt: now,
+      clearTimeout(timeoutId);
+      console.error('[DB REGISTER API ERROR]:', apiErr.message);
+      return {
+        error: `Cannot connect to Database server (${AUTH_API_URL}). Please verify backend is running on your PC. (${apiErr.message})`,
       };
-
-      await saveUsersToDB([...existingUsers, newUser]);
-      return { user: newUser };
     }
   } catch (err: any) {
     return { error: err?.message || 'Failed to register user in database' };
@@ -277,6 +264,9 @@ export async function loginUser(
       return { error: 'Please enter your password' };
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
     // 1. Post to PostgreSQL Backend Auth Gateway
     try {
       const response = await fetch(`${AUTH_API_URL}/api/v1/auth/login`, {
@@ -286,7 +276,9 @@ export async function loginUser(
           emailOrUsername: emailOrUsername.trim(),
           password: passwordInput,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       const data = await response.json();
 
@@ -305,36 +297,32 @@ export async function loginUser(
       await safeStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
       return { user: session };
     } catch (apiErr: any) {
-      console.warn('[DB LOGIN API NOTICE] Falling back to offline login:', apiErr.message);
+      clearTimeout(timeoutId);
+      console.warn('[DB LOGIN API NOTICE]:', apiErr.message);
 
-      // Offline fallback: Check local storage
+      // Check seed demo users if completely offline
       const query = emailOrUsername.trim().toLowerCase();
-      const users = await getAllUsers();
-
-      const matchedUser = users.find(
+      const demoUser = INITIAL_SEED_USERS.find(
         (u) =>
-          u.email.toLowerCase() === query ||
-          u.username.toLowerCase() === query
+          (u.email.toLowerCase() === query || u.username.toLowerCase() === query) &&
+          u.password === passwordInput
       );
 
-      if (!matchedUser) {
-        return { error: 'No account found with this email or username' };
+      if (demoUser) {
+        const session: UserSession = {
+          id: demoUser.id,
+          username: demoUser.username,
+          fullName: demoUser.username,
+          email: demoUser.email,
+          role: demoUser.role,
+        };
+        await safeStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
+        return { user: session };
       }
 
-      if (matchedUser.password && matchedUser.password !== passwordInput) {
-        return { error: 'Incorrect password. Please verify and try again.' };
-      }
-
-      const session: UserSession = {
-        id: matchedUser.id,
-        username: matchedUser.username,
-        fullName: matchedUser.username,
-        email: matchedUser.email,
-        role: matchedUser.role,
+      return {
+        error: `Cannot connect to Database server (${AUTH_API_URL}). Please verify backend is running on your PC.`,
       };
-
-      await safeStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
-      return { user: session };
     }
   } catch (err: any) {
     return { error: err?.message || 'Login verification failed against database' };

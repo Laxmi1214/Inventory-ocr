@@ -6,13 +6,15 @@ NOISE_EXACT = {
     'FILE', 'EDIT', 'FORMAT', 'VIEW', 'HELP', 'UNTITLED', 'NOTEPAD',
     'PP-OCR', 'PADDLEO', 'WINDOW', 'CHROME', 'DESKTOP', 'SCREEN', 'BUTTON',
     'MENU', 'TAB', 'CLOSE', 'MINIMIZE', 'MAXIMIZE', 'SAVE', 'SAVE AS',
-    'OPEN', 'OPEN SA', 'NEW', 'SETTINGS', 'ACTIVE', 'MANUAL', 'CONFIRM'
+    'OPEN', 'OPEN SA', 'NEW', 'SETTINGS', 'ACTIVE', 'MANUAL', 'CONFIRM',
+    'PO RECEPTION', 'CONFIRM & RECEIVE', 'SCAN AGAIN'
 }
 
 NOISE_SUBSTRINGS = [
     'UNTITLED', 'NOTEPAD', 'PADDLE', 'PP-OCR', 'EASYOCR', 'VSCODE',
     'TASKBAR', 'EXPLORER', 'WINDOWS', 'CHROME', 'EDGE', 'DESKTOP',
-    'WHATSAPP', 'WNATSAPP', 'LAKSHMI', 'LAKSHML', 'TODAY AT'
+    'WHATSAPP', 'WNATSAPP', 'LAKSHMI', 'LAKSHML', 'TODAY AT',
+    'OPEN SA', 'FIX NESTE', 'WHA', 'PADDLEO', 'READ TEXT', 'CAMERA'
 ]
 
 METADATA_LINE_KEYWORDS = {
@@ -65,12 +67,9 @@ class PharmaEntityExtractor:
         re.IGNORECASE
     )
 
-    # Universal Robust Date Regex:
-    # 1. YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
-    # 2. DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD,MM/YYYY
-    # 3. MM/YYYY, MM-YYYY, MM/YY, MM.YYYY
-    # 4. Month YYYY (e.g. Jan 2026, Dec 2027)
-    DATE_REGEX_STR = r'(?:20\d{2}[\/\-\.][0-1]?[0-9][\/\-\.][0-3]?[0-9]|[0-3]?[0-9][\/\-\.,][0-1]?[0-9][\/\-\.,](?:20\d{2}|\d{2})|[0-1]?[0-9][\/\-\.,](?:20\d{2}|\d{2})|[0-3]?[0-9]?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\/\-\.\s]*(?:20\d{2}|\d{2}))'
+    # Universal Robust Date Regex (Validates Month 01-12, Day 01-31, Year 2020-2039):
+    # Prevents time values like 14:08 from falsely matching as dates
+    DATE_REGEX_STR = r'(?:20[2-3][0-9][\/\-\.](?:0[1-9]|1[0-2])[\/\-\.](?:0[1-9]|[12][0-9]|3[01])|(?:0[1-9]|[12][0-9]|3[01])[\/\-\.](?:0[1-9]|1[0-2])[\/\-\.](?:20[2-3][0-9]|[2-3][0-9])|(?:0[1-9]|1[0-2])[\/\-\.](?:20[2-3][0-9]|[2-3][0-9])|(?:0[1-9]|[12][0-9]|3[01])?\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\/\-\.\s]*(?:20[2-3][0-9]|[2-3][0-9]))'
 
     @classmethod
     def clean_date_str(cls, d: str) -> str:
@@ -161,7 +160,10 @@ class PharmaEntityExtractor:
 
             # 3. PURCHASE ORDER (PO NUMBER)
             if not extracted_po:
-                if re.search(r'\b(?:PURCHASE\s*ORDER|PURCHASE|P\.?O\.?(?:\s*(?:NO|NUMBER|#))?)\b', upper):
+                po_direct = re.search(r'\b(PO-[A-Za-z0-9\-_]{2,25})\b', line, re.IGNORECASE)
+                if po_direct:
+                    extracted_po = po_direct.group(1).upper()
+                elif re.search(r'\b(?:PURCHASE\s*ORDER|PURCHASE|P\.?O\.?(?:\s*(?:NO|NUMBER|#))?)\b', upper):
                     val = re.sub(r'^(?:PURCHASE\s*ORDER|PURCHASE|P\.?O\.?(?:\s*(?:NO|NUMBER|#))?|ORDER)[\s.:;=\-_/]*', '', line, flags=re.IGNORECASE).strip()
                     val = re.sub(r'^(?:NO|NUMBER|#)[\s.:;=\-_/]*', '', val, flags=re.IGNORECASE).strip()
                     po_m = re.search(r'([A-Za-z0-9\-_]{3,25})', val)
@@ -293,10 +295,14 @@ class PharmaEntityExtractor:
 
         # 3. PO Fallback
         if not extracted_po:
-            po_regex = re.compile(r'\b(?:PO|PURCHASE\s*ORDER)[\s.:#\-]+([A-Za-z0-9\-_]{3,25})', re.IGNORECASE)
-            pm = po_regex.search(combined_text)
-            if pm and pm.group(1).upper() not in {'NUMBER', 'NO', 'ORDER', 'PURCHASE'}:
-                extracted_po = pm.group(1)
+            po_direct = re.search(r'\b(PO-[A-Za-z0-9\-_]{2,25})\b', combined_text, re.IGNORECASE)
+            if po_direct:
+                extracted_po = po_direct.group(1).upper()
+            else:
+                po_regex = re.compile(r'\b(?:PO|PURCHASE\s*ORDER)[\s.:#\-]+([A-Za-z0-9\-_]{3,25})', re.IGNORECASE)
+                pm = po_regex.search(combined_text)
+                if pm and pm.group(1).upper() not in {'NUMBER', 'NO', 'ORDER', 'PURCHASE'}:
+                    extracted_po = pm.group(1)
 
         # 4. Batch Fallback
         if not extracted_batch:
