@@ -94,6 +94,19 @@ const server = http.createServer(async (req, res) => {
   const urlPath = req.url.split('?')[0];
 
   // -------------------------------------------------------------
+  // Route 0: Health Check Endpoint
+  // -------------------------------------------------------------
+  if (req.method === 'GET' && (urlPath === '/health' || urlPath === '/api/v1/health')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({
+      status: 'healthy',
+      service: 'Node Bridge & PostgreSQL Gateway',
+      dbConnected: !!sql,
+      timestamp: new Date().toISOString()
+    }));
+  }
+
+  // -------------------------------------------------------------
   // Route 1: Register User in PostgreSQL Database
   // -------------------------------------------------------------
   if (req.method === 'POST' && urlPath === '/api/v1/auth/register') {

@@ -99,35 +99,46 @@ export function decodePharmaBarcode(rawCode: string, codeType?: string): Extract
   }
 
   // Case 4: GS1 DataMatrix / GS1 QR Code for pharma: (01)GTIN (17)YYMMDD (10)BATCH
-  if (cleanCode.length >= 14 && (cleanCode.startsWith('01') || cleanCode.startsWith('(01)'))) {
+  if (cleanCode.length >= 14 && (cleanCode.startsWith('01') || cleanCode.startsWith('(01)') || cleanCode.includes('(01)'))) {
     try {
-      const gtin = cleanCode.substring(2, 16);
+      let gtin = '';
       let expiry = '';
       let batch = '';
 
-      const expIndex = cleanCode.indexOf('17');
-      if (expIndex !== -1 && cleanCode.length >= expIndex + 8) {
-        const yymmdd = cleanCode.substring(expIndex + 2, expIndex + 8);
-        const year = '20' + yymmdd.substring(0, 2);
-        const month = yymmdd.substring(2, 4);
-        const day = yymmdd.substring(4, 6);
-        expiry = `${year}-${month}-${day}`;
+      // Match GTIN: (01)14-digits or starting with 01 followed by 14 digits
+      const gtinMatch = cleanCode.match(/(?:\(01\)|(?<=^01))(\d{14})/);
+      if (gtinMatch) {
+        gtin = gtinMatch[1];
+      } else if (cleanCode.startsWith('01') && cleanCode.length >= 16) {
+        gtin = cleanCode.substring(2, 16);
       }
 
-      const batchIndex = cleanCode.indexOf('10');
-      if (batchIndex !== -1) {
-        batch = cleanCode.substring(batchIndex + 2, batchIndex + 12).replace(/[^A-Za-z0-9]/g, '');
+      // Match Expiry date AI (17): YYMMDD
+      const expMatch = cleanCode.match(/(?:\(17\)|(?<=\D17|^.{16}17))(\d{2})(\d{2})(\d{2})/);
+      if (expMatch) {
+        const year = '20' + expMatch[1];
+        const month = expMatch[2];
+        const day = expMatch[3];
+        expiry = `${month}/${year}`;
       }
 
-      return {
-        source: isQR ? 'QR_CODE' : 'BARCODE',
-        barcode: gtin || cleanCode,
-        barcodeType: isQR ? 'GS1_QR_CODE' : 'GS1_DATAMATRIX',
-        batchNumber: batch || undefined,
-        expiryDate: expiry || undefined,
-        confidence: 1.0,
-        rawText: cleanCode,
-      };
+      // Match Batch / Lot AI (10)
+      const batchMatch = cleanCode.match(/(?:\(10\)|(?<=\D10|^.{24}10))([A-Za-z0-9\-_]{2,20})/);
+      if (batchMatch) {
+        batch = batchMatch[1].trim();
+      }
+
+      if (gtin || batch || expiry) {
+        return {
+          source: isQR ? 'QR_CODE' : 'BARCODE',
+          barcode: gtin || cleanCode,
+          barcodeType: isQR ? 'GS1_QR_CODE' : 'GS1_DATAMATRIX',
+          batchNumber: batch || undefined,
+          expiryDate: expiry || undefined,
+          confidence: 1.0,
+          rawText: cleanCode,
+        };
+      }
     } catch {
       // Fallback
     }

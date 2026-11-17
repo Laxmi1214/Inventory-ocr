@@ -97,16 +97,14 @@ export async function getInboundShipments(): Promise<{
   error?: string;
 }> {
   // 1. Primary Source: Node Gateway connected directly to PostgreSQL DB
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
     const res = await fetch(`${BACKEND_BASE_URL}/api/v1/receiving/shipments`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
 
     if (res.ok) {
       const json = await res.json();
@@ -117,6 +115,8 @@ export async function getInboundShipments(): Promise<{
     }
   } catch (apiErr: any) {
     console.warn('[RECEIVING] Node DB gateway fetch notice:', apiErr.message);
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   // 2. Secondary Source: Direct Supabase Client if configured

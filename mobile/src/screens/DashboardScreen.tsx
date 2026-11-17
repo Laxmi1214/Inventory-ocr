@@ -7,6 +7,7 @@ import {
   ScrollView,
   SafeAreaView,
   Alert,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getInventoryMetrics, InventoryMetrics } from '../services/inventoryService';
@@ -55,6 +56,8 @@ export default function DashboardScreen({
     medicineCount: 3,
   });
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const loadMetrics = async () => {
     try {
       const data = await getInventoryMetrics();
@@ -62,6 +65,12 @@ export default function DashboardScreen({
     } catch (e) {
       console.warn('Failed to load metrics:', e);
     }
+  };
+
+  const onRefresh = async () => {
+    setIsRefreshing(true);
+    await loadMetrics();
+    setIsRefreshing(false);
   };
 
   useEffect(() => {
@@ -78,7 +87,13 @@ export default function DashboardScreen({
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#38BDF8" />
+        }
+      >
         {/* Top App Bar */}
         <View style={styles.topBar}>
           <View style={styles.userInfoContainer}>

@@ -88,7 +88,7 @@ export default function ScannerScreen({
     setSku(decoded.sku || matchedItem?.product?.sku || primaryItem?.sku || '');
     setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
     setMfgDate(decoded.mfgDate || '');
-    setExpiryDate(decoded.expiryDate || '12/2027');
+    setExpiryDate(decoded.expiryDate || '');
     setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
     setPrice(decoded.price ? decoded.price.toString() : '');
     setDetectedLines([]);
@@ -196,7 +196,7 @@ export default function ScannerScreen({
     setSku(decoded.sku || matchedItem?.product?.sku || manualCode.trim());
     setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
     setMfgDate('');
-    setExpiryDate(decoded.expiryDate || '12/2027');
+    setExpiryDate(decoded.expiryDate || '');
     setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
     setPrice('');
     setDetectedLines([]);
@@ -214,6 +214,10 @@ export default function ScannerScreen({
     }
     if (!batchNumber.trim()) {
       Alert.alert('Validation Error', 'Batch / Lot Number is required for pharma tracking.');
+      return;
+    }
+    if (!expiryDate.trim()) {
+      Alert.alert('Validation Error', 'Expiry Date is required for pharmaceutical tracking (e.g. MM/YYYY).');
       return;
     }
     const numQty = parseInt(quantity, 10);

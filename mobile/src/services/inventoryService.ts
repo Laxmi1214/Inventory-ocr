@@ -116,16 +116,14 @@ const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.
  */
 export async function getInventoryMetrics(): Promise<InventoryMetrics> {
   // 1. Fetch live metrics from PostgreSQL Database Gateway
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
     const res = await fetch(`${BACKEND_BASE_URL}/api/v1/inventory/metrics`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
     });
-    clearTimeout(timeoutId);
 
     if (res.ok) {
       const json = await res.json();
@@ -140,6 +138,8 @@ export async function getInventoryMetrics(): Promise<InventoryMetrics> {
     }
   } catch (apiErr: any) {
     console.warn('[INVENTORY] Live DB metrics fetch notice:', apiErr.message);
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   // 2. Local safeStorage fallback
@@ -252,10 +252,9 @@ export async function recordMedicineMovement(params: {
 
     // 1. Commit directly to PostgreSQL Database Gateway if INBOUND
     if (type === 'INBOUND') {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 7000);
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-
         const res = await fetch(`${BACKEND_BASE_URL}/api/v1/receiving/receive-item`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -273,7 +272,6 @@ export async function recordMedicineMovement(params: {
           }),
           signal: controller.signal,
         });
-        clearTimeout(timeoutId);
 
         if (res.ok) {
           const json = await res.json();
@@ -283,6 +281,8 @@ export async function recordMedicineMovement(params: {
         }
       } catch (dbErr: any) {
         console.warn('[INVENTORY DB] PostgreSQL gateway commit notice:', dbErr.message);
+      } finally {
+        clearTimeout(timeoutId);
       }
     }
 
@@ -401,7 +401,7 @@ export async function sendBase64ToPaddleOcr(base64Image: string): Promise<OcrSca
  * Call Private PaddleOCR Microservice with image URI
  */
 export async function sendImageToPaddleOcr(imageUri: string): Promise<OcrScanResult> {
-  const ocrBaseUrl = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8000';
+  const ocrBaseUrl = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
 
   const formData = new FormData();
   const filename = imageUri.split('/').pop() || 'medicine.jpg';

@@ -112,7 +112,7 @@ export default function App() {
   ) => {
     const prodName = extractedData.productName || shipment.items[0]?.product?.name || 'Pharmaceutical Item';
     const batch = extractedData.batchNumber || shipment.items[0]?.expectedBatch || 'BATCH-REC-01';
-    const expiry = extractedData.expiryDate || '12/2027';
+    const expiry = extractedData.expiryDate || '';
     const qty = extractedData.quantity || shipment.items[0]?.expectedQty || 10;
     const priceText = extractedData.price ? `₹${extractedData.price}` : 'N/A';
 
@@ -124,7 +124,7 @@ export default function App() {
         expiryDate: expiry,
         mfgDate: extractedData.mfgDate,
         sku: extractedData.sku,
-        price: extractedData.price,
+        price: extractedData.price !== undefined ? String(extractedData.price) : undefined,
         poNumber: shipment.poNumber,
         userId: currentUser?.id,
         type: 'INBOUND',
