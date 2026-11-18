@@ -10,6 +10,7 @@ import ScannerScreen from './src/screens/ScannerScreen';
 import ValidationScreen from './src/screens/ValidationScreen';
 import StockCountListScreen from './src/screens/StockCountListScreen';
 import StockCountAuditScreen from './src/screens/StockCountAuditScreen';
+import SupervisorExceptionScreen from './src/screens/SupervisorExceptionScreen';
 import { InboundShipmentWithItems, flagShipmentDiscrepancy } from './src/services/receiving';
 import { ExtractedLabelData } from './src/services/ocr';
 import { StockAuditTask } from './src/services/auditService';
@@ -33,6 +34,7 @@ export default function App() {
     extractedData: ExtractedLabelData;
     shipment: InboundShipmentWithItems;
   } | null>(null);
+  const [isViewingSupervisorExceptions, setIsViewingSupervisorExceptions] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -111,6 +113,9 @@ export default function App() {
     setCurrentUser(null);
     setSelectedTaskType(null);
     setSelectedShipment(null);
+    setSelectedAuditTask(null);
+    setPendingValidation(null);
+    setIsViewingSupervisorExceptions(false);
     setCurrentScreen('login');
   };
 
@@ -280,11 +285,27 @@ export default function App() {
             onBack={() => setSelectedTaskType(null)}
             onStartScan={handleStartScan}
           />
+        ) : isViewingSupervisorExceptions ? (
+          <SupervisorExceptionScreen
+            userId={currentUser?.id}
+            userName={currentUser?.fullName || currentUser?.username || 'Supervisor'}
+            onBack={() => setIsViewingSupervisorExceptions(false)}
+          />
         ) : (
           <DashboardScreen
             user={currentUser}
             onLogout={handleLogout}
             onSelectTask={(taskId) => setSelectedTaskType(taskId)}
+            onOpenSupervisorExceptions={() => {
+              if (currentUser?.role === 'SUPERVISOR' || currentUser?.role === 'SYSTEM_ADMIN') {
+                setIsViewingSupervisorExceptions(true);
+              } else {
+                Alert.alert(
+                  'Access Denied (RBAC)',
+                  'Only Supervisors and System Administrators have permission to review and approve discrepancy overrides.'
+                );
+              }
+            }}
           />
         )
       ) : currentScreen === 'login' ? (

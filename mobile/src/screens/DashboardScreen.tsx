@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { getInventoryMetrics, InventoryMetrics } from '../services/inventoryService';
+import { getPendingDiscrepancies } from '../services/supervisorService';
 
 export interface UserSession {
   email: string;
@@ -25,6 +26,7 @@ interface DashboardScreenProps {
   onLogout: () => void;
   onSelectTask?: (taskType: string) => void;
   onOpenOcrScanner?: () => void;
+  onOpenSupervisorExceptions?: () => void;
 }
 
 const getRoleBadge = (role?: string) => {
@@ -45,9 +47,13 @@ export default function DashboardScreen({
   onLogout,
   onSelectTask,
   onOpenOcrScanner,
+  onOpenSupervisorExceptions,
 }: DashboardScreenProps) {
   const roleBadge = getRoleBadge(user.role);
   const displayName = user.fullName || user.username || user.email.split('@')[0] || 'Staff';
+  const isSupervisorOrAdmin = user.role === 'SUPERVISOR' || user.role === 'SYSTEM_ADMIN';
+  const isInventoryAdmin = user.role === 'INVENTORY_ADMIN' || user.role === 'SYSTEM_ADMIN';
+  const isOperatorOnly = !isSupervisorOrAdmin && !isInventoryAdmin;
 
   const [metrics, setMetrics] = useState<InventoryMetrics>({
     totalInStock: 950,
@@ -56,12 +62,18 @@ export default function DashboardScreen({
     medicineCount: 3,
   });
 
+  const [pendingExceptionsCount, setPendingExceptionsCount] = useState<number>(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const loadMetrics = async () => {
     try {
       const data = await getInventoryMetrics();
       setMetrics(data);
+
+      if (isSupervisorOrAdmin) {
+        const discSummary = await getPendingDiscrepancies();
+        setPendingExceptionsCount(discSummary.totalPending || 0);
+      }
     } catch (e) {
       console.warn('Failed to load metrics:', e);
     }
@@ -75,7 +87,7 @@ export default function DashboardScreen({
 
   useEffect(() => {
     loadMetrics();
-  }, []);
+  }, [user.role]);
 
   const handleTaskPress = (taskId: string, title: string) => {
     if (onSelectTask) {
@@ -166,6 +178,69 @@ export default function DashboardScreen({
             <Text style={styles.metricSubLabel}>Dispatched / Sold</Text>
           </View>
         </View>
+
+        {/* Supervisor Discrepancy & Override Section (FR-11 / AC-07) */}
+        {isSupervisorOrAdmin && (
+          <View style={styles.supervisorSection}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Supervisor Authorization</Text>
+              <View
+                style={[
+                  styles.priorityPill,
+                  {
+                    backgroundColor:
+                      pendingExceptionsCount > 0
+                        ? 'rgba(239, 68, 68, 0.15)'
+                        : 'rgba(16, 185, 129, 0.15)',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.priorityPillText,
+                    { color: pendingExceptionsCount > 0 ? '#EF4444' : '#10B981' },
+                  ]}
+                >
+                  {pendingExceptionsCount > 0
+                    ? `${pendingExceptionsCount} Discrepancies Pending`
+                    : 'All Exceptions Reconciled'}
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.supervisorCard}
+              onPress={onOpenSupervisorExceptions}
+              activeOpacity={0.8}
+            >
+              <View style={styles.supervisorIconBox}>
+                <Ionicons name="shield-checkmark" size={24} color="#8B5CF6" />
+              </View>
+              <View style={styles.supervisorCardInfo}>
+                <View style={styles.supervisorTitleRow}>
+                  <Text style={styles.supervisorCardTitle}>Exception & Override Inbox</Text>
+                  <View style={styles.rbacTag}>
+                    <Text style={styles.rbacTagText}>FR-11</Text>
+                  </View>
+                </View>
+                <Text style={styles.supervisorCardDesc}>
+                  Review quarantined PO goods and approve/reject stock count variances with audit notes.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#8B5CF6" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Operator Role Floor Notice */}
+        {isOperatorOnly && (
+          <View style={styles.operatorNoticeBox}>
+            <Ionicons name="information-circle-outline" size={18} color="#38BDF8" />
+            <Text style={styles.operatorNoticeText}>
+              Operator Access: Scan barcodes, OCR labels & flag discrepancies. Override approvals require Supervisor authorization.
+            </Text>
+          </View>
+        )}
 
         {/* Warehouse Workflows */}
         <Text style={styles.sectionTitle}>Standard Warehouse Tasks</Text>
@@ -500,5 +575,91 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 12,
     lineHeight: 16,
+  },
+  // Supervisor Section
+  supervisorSection: {
+    marginBottom: 20,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  priorityPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  priorityPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  supervisorCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#8B5CF6',
+  },
+  supervisorIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  supervisorCardInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  supervisorTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  supervisorCardTitle: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  rbacTag: {
+    backgroundColor: 'rgba(139, 92, 246, 0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  rbacTagText: {
+    color: '#C4B5FD',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  supervisorCardDesc: {
+    color: '#94A3B8',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  // Operator Floor Notice
+  operatorNoticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+    borderRadius: 10,
+    padding: 12,
+    gap: 10,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.2)',
+  },
+  operatorNoticeText: {
+    color: '#BAE6FD',
+    fontSize: 12,
+    flex: 1,
+    lineHeight: 17,
   },
 });

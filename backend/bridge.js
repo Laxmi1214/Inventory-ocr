@@ -926,6 +926,273 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
+  // Route 6.3: Supervisor - Get All Pending Discrepancies (Audits & POs)
+  // -------------------------------------------------------------
+  if (req.method === 'GET' && urlPath === '/api/v1/supervisor/discrepancies') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      // 1. Fetch pending stock audit variances
+      const stockVariances = await sql`
+        SELECT 
+          sa.id,
+          sa.inventory_id AS "inventoryId",
+          sa.product_id AS "productId",
+          sa.batch_id AS "batchId",
+          sa.location_code AS "locationCode",
+          sa.system_qty AS "systemQty",
+          sa.physical_qty AS "physicalQty",
+          sa.variance,
+          sa.status,
+          sa.notes,
+          sa.counted_by AS "countedById",
+          sa.created_at AS "createdAt",
+          p.name AS "productName",
+          p.sku,
+          p.unit,
+          b.batch_number AS "batchNumber",
+          b.expiry_date AS "expiryDate",
+          u.username AS "countedByName"
+        FROM public.stock_audits sa
+        JOIN public.products p ON p.id = sa.product_id
+        LEFT JOIN public.batches b ON b.id = sa.batch_id
+        LEFT JOIN public.users u ON u.id = sa.counted_by
+        WHERE sa.status = 'PENDING_SUPERVISOR_APPROVAL'
+        ORDER BY sa.created_at DESC
+      `;
+
+      // 2. Fetch inbound PO shipments flagged with discrepancy
+      const poDiscrepancies = await sql`
+        SELECT 
+          s.id,
+          s.po_number AS "poNumber",
+          s.supplier_name AS "supplierName",
+          s.status,
+          s.notes,
+          s.created_at AS "createdAt",
+          s.updated_at AS "updatedAt",
+          u.username AS "receivedByName"
+        FROM public.inbound_shipments s
+        LEFT JOIN public.users u ON u.id = s.received_by
+        WHERE s.status = 'DISCREPANCY'
+        ORDER BY s.updated_at DESC
+      `;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        totalPending: stockVariances.length + poDiscrepancies.length,
+        stockVariances,
+        poDiscrepancies
+      }));
+    } catch (supErr) {
+      console.error('[DB SUPERVISOR DISCREPANCIES ERROR]:', supErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: supErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.4: Supervisor - Resolve Stock Audit Discrepancy (Approve / Reject)
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/supervisor/resolve-audit') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const { auditId, decision, reason, supervisorId } = body;
+
+      if (!auditId || !decision) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'auditId and decision (APPROVE/REJECT) required' }));
+      }
+
+      if (!reason || !reason.trim()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Mandatory override justification reason is required by pharma policy' }));
+      }
+
+      // Fetch the audit record
+      const auditRows = await sql`SELECT * FROM public.stock_audits WHERE id = ${auditId} LIMIT 1`;
+      if (auditRows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Audit record not found' }));
+      }
+      const audit = auditRows[0];
+
+      if (decision === 'APPROVE') {
+        // 1. Mark audit APPROVED
+        await sql`
+          UPDATE public.stock_audits
+          SET 
+            status = 'APPROVED',
+            supervisor_id = ${supervisorId || 'SUPERVISOR'},
+            supervisor_notes = ${reason.trim()},
+            updated_at = NOW()
+          WHERE id = ${auditId}
+        `;
+
+        // 2. Adjust active inventory balance to match verified physical count
+        if (audit.inventory_id) {
+          await sql`
+            UPDATE public.inventory
+            SET 
+              quantity = ${audit.physical_qty},
+              updated_at = NOW()
+            WHERE id = ${audit.inventory_id}
+          `;
+        }
+
+        // 3. Record transaction in audit history
+        await sql`
+          INSERT INTO public.inventory_transactions (
+            product_id,
+            batch_id,
+            type,
+            quantity,
+            notes,
+            created_by
+          )
+          VALUES (
+            ${audit.product_id},
+            ${audit.batch_id},
+            'AUDIT_OVERRIDE',
+            ${audit.variance},
+            ${'Supervisor Approved Variance Override: ' + reason.trim()},
+            ${supervisorId || 'SUPERVISOR'}
+          )
+        `;
+
+        console.log(`[SUPERVISOR OVERRIDE APPROVED] Audit ${auditId} -> Inventory balance updated to ${audit.physical_qty}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          status: 'APPROVED',
+          message: `Discrepancy approved and inventory balance updated to ${audit.physical_qty} units.`
+        }));
+      } else {
+        // REJECT -> order physical recount
+        await sql`
+          UPDATE public.stock_audits
+          SET 
+            status = 'REJECTED_RECOUNT',
+            supervisor_id = ${supervisorId || 'SUPERVISOR'},
+            supervisor_notes = ${'Recount Ordered: ' + reason.trim()},
+            updated_at = NOW()
+          WHERE id = ${auditId}
+        `;
+
+        console.log(`[SUPERVISOR OVERRIDE REJECTED] Audit ${auditId} -> Recount ordered`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: true,
+          status: 'REJECTED_RECOUNT',
+          message: 'Discrepancy rejected. Stock recount order dispatched to warehouse floor.'
+        }));
+      }
+    } catch (resErr) {
+      console.error('[SUPERVISOR RESOLVE AUDIT ERROR]:', resErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: resErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.5: Supervisor - Resolve Inbound PO Discrepancy
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/supervisor/resolve-po') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const { poNumber, decision, reason, supervisorId } = body;
+
+      if (!poNumber || !decision) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'poNumber and decision required' }));
+      }
+
+      if (!reason || !reason.trim()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Mandatory reason is required' }));
+      }
+
+      const newStatus = decision === 'APPROVE' ? 'APPROVED_WITH_DEVIATION' : 'RETURN_TO_VENDOR';
+      const actionText = decision === 'APPROVE' ? 'Supervisor Approved with Deviation' : 'Supervisor Confirmed Return to Vendor';
+      const noteAppend = ` [${actionText}: ${reason.trim()} by ${supervisorId || 'SUPERVISOR'}]`;
+
+      await sql`
+        UPDATE public.inbound_shipments
+        SET 
+          status = ${newStatus},
+          notes = CONCAT(COALESCE(notes, ''), ${noteAppend}),
+          updated_at = NOW()
+        WHERE po_number = ${poNumber}
+      `;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        status: newStatus,
+        message: `PO ${poNumber} updated to ${newStatus}.`
+      }));
+    } catch (poResErr) {
+      console.error('[SUPERVISOR RESOLVE PO ERROR]:', poResErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: poResErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.6: Admin - Update User Role
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/admin/update-role') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const { userId, newRole } = body;
+
+      if (!userId || !newRole) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'userId and newRole required' }));
+      }
+
+      const cleanRole = newRole.trim().toUpperCase();
+      const updated = await sql`
+        UPDATE public.users
+        SET role = ${cleanRole}, updated_at = NOW()
+        WHERE id = ${userId}
+        RETURNING id, username, email, role, updated_at
+      `;
+
+      if (updated.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'User not found' }));
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, user: updated[0] }));
+    } catch (roleErr) {
+      console.error('[ADMIN ROLE UPDATE ERROR]:', roleErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: roleErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
   // Route 7: Forward All Other Requests to Python FastAPI (OCR)
   // -------------------------------------------------------------
   const options = {
