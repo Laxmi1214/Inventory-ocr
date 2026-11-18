@@ -36,6 +36,12 @@ export default function App() {
     extractedData: ExtractedLabelData;
     shipment: InboundShipmentWithItems;
   } | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<OutboundOrder | null>(null);
+  const [pendingOrderValidation, setPendingOrderValidation] = useState<{
+    extractedData: ExtractedLabelData;
+    order: OutboundOrder;
+  } | null>(null);
+  const [isViewingSupervisorExceptions, setIsViewingSupervisorExceptions] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -117,6 +123,11 @@ export default function App() {
     setCurrentUser(null);
     setSelectedTaskType(null);
     setSelectedShipment(null);
+    setSelectedAuditTask(null);
+    setSelectedOrder(null);
+    setPendingValidation(null);
+    setPendingOrderValidation(null);
+    setIsViewingSupervisorExceptions(false);
     setCurrentScreen('login');
   };
 
@@ -352,6 +363,8 @@ export default function App() {
             <StockCountListScreen
               onBack={() => setSelectedTaskType(null)}
               onSelectTask={(task) => setSelectedAuditTask(task)}
+            />
+          )
         ) : selectedTaskType === 'PICK_PACK' ? (
           pendingOrderValidation ? (
             <ValidationScreen
