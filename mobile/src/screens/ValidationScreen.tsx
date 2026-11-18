@@ -15,26 +15,40 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { InboundShipmentWithItems, ExpectedProductItem } from '../services/receiving';
+import { OutboundOrder } from '../services/dispatch';
 import { ExtractedLabelData } from '../services/ocr';
 
 interface ValidationScreenProps {
-  shipment: InboundShipmentWithItems;
+  shipment?: InboundShipmentWithItems;
+  order?: OutboundOrder;
+  mode?: 'RECEIVING' | 'PICK_PACK';
   extractedData: ExtractedLabelData;
   onBack: () => void;
-  onConfirmAddToInventory: (
+  onConfirmAddToInventory?: (
     validatedData: ExtractedLabelData,
     shipment: InboundShipmentWithItems
+  ) => Promise<void>;
+  onConfirmDispatchStock?: (
+    validatedData: ExtractedLabelData,
+    order: OutboundOrder
   ) => Promise<void>;
   onFlagDiscrepancy: (reasons: string[], notes?: string) => Promise<void>;
 }
 
 export default function ValidationScreen({
   shipment,
+  order,
+  mode,
   extractedData,
   onBack,
   onConfirmAddToInventory,
+  onConfirmDispatchStock,
   onFlagDiscrepancy,
 }: ValidationScreenProps) {
+  const isPickMode = mode === 'PICK_PACK' || Boolean(order);
+  const targetCode = order ? order.orderNumber : (shipment?.poNumber || '');
+  const partnerName = order ? order.customerName : (shipment?.supplierName || '');
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDiscrepancyModal, setShowDiscrepancyModal] = useState(false);
@@ -48,9 +62,52 @@ export default function ValidationScreen({
   const [editMfg, setEditMfg] = useState(extractedData.mfgDate || '');
   const [editQuantity, setEditQuantity] = useState(String(extractedData.quantity || 10));
 
-  // Determine the target expected PO line item
+  // Determine the target expected PO line item or Order line item
   const expectedItem: ExpectedProductItem | undefined = useMemo(() => {
-    if (!shipment.items || shipment.items.length === 0) return undefined;
+    if (order) {
+      if (!order.items || order.items.length === 0) return undefined;
+      const cleanSku = editSku.trim().toUpperCase();
+      const cleanName = editProductName.trim().toLowerCase();
+      const bySku = order.items.find((i) => i.sku && i.sku.toUpperCase() === cleanSku);
+      if (bySku) {
+        return {
+          id: bySku.id,
+          shipmentId: order.id,
+          productId: bySku.productId || bySku.id,
+          expectedBatch: bySku.suggestedBatch,
+          expectedQty: bySku.requiredQty,
+          receivedQty: bySku.pickedQty,
+          status: bySku.status,
+          product: { id: bySku.id, sku: bySku.sku, name: bySku.productName, unit: 'BOX' },
+        };
+      }
+      const byName = order.items.find((i) => i.productName && i.productName.toLowerCase().includes(cleanName));
+      if (byName) {
+        return {
+          id: byName.id,
+          shipmentId: order.id,
+          productId: byName.productId || byName.id,
+          expectedBatch: byName.suggestedBatch,
+          expectedQty: byName.requiredQty,
+          receivedQty: byName.pickedQty,
+          status: byName.status,
+          product: { id: byName.id, sku: byName.sku, name: byName.productName, unit: 'BOX' },
+        };
+      }
+      const first = order.items[0];
+      return {
+        id: first.id,
+        shipmentId: order.id,
+        productId: first.productId || first.id,
+        expectedBatch: first.suggestedBatch,
+        expectedQty: first.requiredQty,
+        receivedQty: first.pickedQty,
+        status: first.status,
+        product: { id: first.id, sku: first.sku, name: first.productName, unit: 'BOX' },
+      };
+    }
+
+    if (!shipment?.items || shipment.items.length === 0) return undefined;
 
     // Try finding exact SKU match first
     const cleanSku = editSku.trim().toUpperCase();
@@ -81,7 +138,7 @@ export default function ValidationScreen({
 
     // Fallback to first line item
     return shipment.items[0];
-  }, [shipment.items, editSku, editProductName, editBatch]);
+  }, [shipment?.items, order?.items, editSku, editProductName, editBatch]);
 
   // -------------------------------------------------------------
   // Validation Engine: Compares Physical Item vs PO Record
@@ -220,9 +277,9 @@ export default function ValidationScreen({
     if (!validationResults.isOverallPass) {
       Alert.alert(
         'Validation Blocked',
-        'Cannot add to inventory because one or more PO verification checks failed:\n\n• ' +
+        `Cannot ${isPickMode ? 'dispatch stock' : 'add to inventory'} because verification check(s) failed:\n\n• ` +
           validationResults.reasons.join('\n• ') +
-          '\n\nPlease resolve the discrepancy or route the medicine to Quarantine.'
+          '\n\nPlease resolve the discrepancy or route to Quarantine.'
       );
       return;
     }
@@ -233,19 +290,27 @@ export default function ValidationScreen({
         source: extractedData.source,
         productName: editProductName.trim(),
         sku: editSku.trim() || expectedItem?.product?.sku,
-        batchNumber: editBatch.trim().toUpperCase(),
+        batchNumber: editBatch.trim().toUpperCase() || 'BATCH-PICK',
         mfgDate: editMfg.trim() || undefined,
         expiryDate: editExpiry.trim() || undefined,
         quantity: validationResults.parsedQty,
         price: extractedData.price,
-        poNumber: shipment.poNumber,
+        poNumber: targetCode,
         rawText: extractedData.rawText,
         confidence: extractedData.confidence,
       };
 
-      await onConfirmAddToInventory(validatedPayload, shipment);
+      if (isPickMode) {
+        if (onConfirmDispatchStock && order) {
+          await onConfirmDispatchStock(validatedPayload, order);
+        }
+      } else {
+        if (onConfirmAddToInventory && shipment) {
+          await onConfirmAddToInventory(validatedPayload, shipment);
+        }
+      }
     } catch (err: any) {
-      Alert.alert('Intake Error', err?.message || 'Failed to add item to inventory.');
+      Alert.alert(isPickMode ? 'Dispatch Error' : 'Intake Error', err?.message || 'Transaction failed.');
     } finally {
       setIsSubmitting(false);
     }
@@ -273,8 +338,8 @@ export default function ValidationScreen({
           <Ionicons name="arrow-back" size={22} color="#F8FAFC" />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>PO Goods Verification</Text>
-          <Text style={styles.headerSubtitle}>Workflow 1: Inbound Reception</Text>
+          <Text style={styles.headerTitle}>{isPickMode ? 'Outbound Pick Verification' : 'PO Goods Verification'}</Text>
+          <Text style={styles.headerSubtitle}>{isPickMode ? 'Workflow 2: Pick & Pack (Go)' : 'Workflow 1: Inbound Reception'}</Text>
         </View>
         <TouchableOpacity
           style={styles.editButton}
@@ -286,12 +351,12 @@ export default function ValidationScreen({
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* PO & Supplier Banner */}
+        {/* Reference & Partner Banner */}
         <View style={styles.poCard}>
           <View style={styles.poRow}>
-            <View style={styles.poBadge}>
-              <Ionicons name="document-text" size={14} color="#38BDF8" style={{ marginRight: 6 }} />
-              <Text style={styles.poBadgeText}>{shipment.poNumber}</Text>
+            <View style={[styles.poBadge, isPickMode && { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#F59E0B' }]}>
+              <Ionicons name={isPickMode ? 'cart' : 'document-text'} size={14} color={isPickMode ? '#F59E0B' : '#38BDF8'} style={{ marginRight: 6 }} />
+              <Text style={[styles.poBadgeText, isPickMode && { color: '#F59E0B' }]}>{targetCode}</Text>
             </View>
             <View
               style={[
@@ -316,7 +381,7 @@ export default function ValidationScreen({
               </Text>
             </View>
           </View>
-          <Text style={styles.supplierText}>{shipment.supplierName}</Text>
+          <Text style={styles.supplierText}>{partnerName}</Text>
         </View>
 
         {/* Overall Verification Status Card */}
@@ -545,12 +610,12 @@ export default function ValidationScreen({
           </View>
         </View>
 
-        {/* 4. Intake Quantity */}
+        {/* 4. Intake / Dispatch Quantity */}
         <View style={styles.checkCard}>
           <View style={styles.checkCardHeader}>
             <View style={styles.checkLabelGroup}>
-              <Ionicons name="cube-outline" size={18} color="#38BDF8" style={{ marginRight: 8 }} />
-              <Text style={styles.checkLabel}>Intake Quantity</Text>
+              <Ionicons name="cube-outline" size={18} color={isPickMode ? '#F59E0B' : '#38BDF8'} style={{ marginRight: 8 }} />
+              <Text style={styles.checkLabel}>{isPickMode ? 'Dispatch Quantity' : 'Intake Quantity'}</Text>
             </View>
             <View
               style={[
@@ -576,7 +641,7 @@ export default function ValidationScreen({
                 ]}
               >
                 {validationResults.qtyMatchStatus === 'EXACT'
-                  ? 'FULL PO'
+                  ? isPickMode ? 'FULL ORDER' : 'FULL PO'
                   : validationResults.qtyMatchStatus === 'PARTIAL'
                   ? 'PARTIAL'
                   : 'OVER-QTY'}
@@ -586,15 +651,15 @@ export default function ValidationScreen({
 
           <View style={styles.compareGrid}>
             <View style={styles.compareCol}>
-              <Text style={styles.compareHeader}>EXPECTED REMAINING</Text>
+              <Text style={styles.compareHeader}>{isPickMode ? 'ORDER REQUIREMENT' : 'EXPECTED REMAINING'}</Text>
               <Text style={styles.compareValuePrimary}>
                 {validationResults.expectedQty} units
               </Text>
             </View>
             <View style={styles.compareDivider} />
             <View style={styles.compareCol}>
-              <Text style={styles.compareHeader}>RECEIVING NOW</Text>
-              <Text style={styles.compareValuePrimary}>
+              <Text style={styles.compareHeader}>{isPickMode ? 'PICKING NOW' : 'RECEIVING NOW'}</Text>
+              <Text style={[styles.compareValuePrimary, isPickMode && { color: '#F59E0B' }]}>
                 {validationResults.parsedQty} units
               </Text>
             </View>
@@ -603,10 +668,11 @@ export default function ValidationScreen({
 
         {/* Action Buttons */}
         <View style={styles.actionContainer}>
-          {/* 1. Primary: Confirm & Add to Inventory */}
+          {/* 1. Primary: Confirm & Add / Dispatch */}
           <TouchableOpacity
             style={[
               styles.primaryButton,
+              isPickMode && { backgroundColor: '#F59E0B' },
               !validationResults.isOverallPass && styles.buttonDisabled,
             ]}
             onPress={handleConfirmIntake}
@@ -617,8 +683,12 @@ export default function ValidationScreen({
               <ActivityIndicator color="#FFFFFF" size="small" />
             ) : (
               <>
-                <Ionicons name="checkmark-done-circle" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.primaryButtonText}>Confirm & Add to Inventory</Text>
+                <Ionicons name={isPickMode ? 'open-outline' : 'checkmark-done-circle'} size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.primaryButtonText}>
+                  {isPickMode
+                    ? `Confirm & Dispatch (-${validationResults.parsedQty} units)`
+                    : `Confirm & Add to Inventory (+${validationResults.parsedQty} units)`}
+                </Text>
               </>
             )}
           </TouchableOpacity>
@@ -744,8 +814,8 @@ export default function ValidationScreen({
             </View>
 
             <Text style={styles.discrepancySubtitle}>
-              Flagging PO {shipment.poNumber} will mark the shipment item as DISCREPANCY and route
-              the physical goods to the Quarantine Holding Area. Stock will NOT be added to active
+              Flagging {isPickMode ? 'Order' : 'PO'} {targetCode} will mark the item as DISCREPANCY and route
+              the physical goods to the Quarantine Holding Area. Stock will NOT be dispatched or added to active
               inventory.
             </Text>
 

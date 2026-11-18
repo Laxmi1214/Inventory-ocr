@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { InboundShipmentWithItems } from '../services/receiving';
+import { OutboundOrder } from '../services/dispatch';
 import {
   decodePharmaBarcode,
   ExtractedLabelData,
@@ -24,19 +25,60 @@ import {
 import { sendBase64ToPaddleOcr, sendImageToPaddleOcr } from '../services/inventoryService';
 
 interface ScannerScreenProps {
-  shipment: InboundShipmentWithItems;
+  shipment?: InboundShipmentWithItems;
+  order?: OutboundOrder;
+  mode?: 'RECEIVING' | 'PICK_PACK';
   onBack: () => void;
-  onProceedToValidate: (extractedData: ExtractedLabelData, shipment: InboundShipmentWithItems) => void;
+  onProceedToValidate: (
+    extractedData: ExtractedLabelData,
+    shipment?: InboundShipmentWithItems,
+    order?: OutboundOrder
+  ) => void;
 }
 
 export default function ScannerScreen({
   shipment,
+  order,
+  mode,
   onBack,
   onProceedToValidate,
 }: ScannerScreenProps) {
+  const isPickMode = mode === 'PICK_PACK' || Boolean(order);
+  const targetCode = order ? order.orderNumber : (shipment?.poNumber || '');
+  const partnerName = order ? order.customerName : (shipment?.supplierName || '');
+  const orderPrimary = order?.items[0];
+  const primaryItem = order
+    ? {
+        id: orderPrimary?.id || '',
+        name: orderPrimary?.productName || '',
+        sku: orderPrimary?.sku || '',
+        barcode: '',
+        packSize: '',
+        unit: 'BOX',
+      }
+    : shipment?.items[0]?.product;
+
+  const defaultExpectedBatch = order ? (orderPrimary?.suggestedBatch || '') : (shipment?.items[0]?.expectedBatch || '');
+  const defaultExpectedQty = order ? (orderPrimary?.requiredQty || 10) : (shipment?.items[0]?.expectedQty || 10);
+  const expectedItemsList = order
+    ? order.items.map((i) => ({
+        id: i.id,
+        product: { id: i.id, name: i.productName, sku: i.sku, barcode: '', packSize: '', unit: 'BOX' },
+        expectedBatch: i.suggestedBatch,
+        expectedQty: i.requiredQty,
+      }))
+    : shipment?.items || [];
+
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<any>(null);
   const isBusyRef = useRef<boolean>(false);
+
+  // Auto-request camera permission on screen entry if not determined or can ask again
+  useEffect(() => {
+    if (permission && !permission.granted && permission.canAskAgain) {
+      requestPermission();
+    }
+  }, [permission]);
 
   const [isTorchOn, setIsTorchOn] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
@@ -45,27 +87,24 @@ export default function ScannerScreen({
   const [showManualModal, setShowManualModal] = useState(false);
   const [manualCode, setManualCode] = useState('');
 
-  // Editable Form Fields inside the Reception Modal
-  const [poNumber, setPoNumber] = useState(shipment.poNumber || '');
+  // Editable Form Fields inside the Modal
+  const [poNumber, setPoNumber] = useState(targetCode);
   const [productName, setProductName] = useState('');
   const [sku, setSku] = useState('');
   const [batchNumber, setBatchNumber] = useState('');
   const [mfgDate, setMfgDate] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
-  const [quantity, setQuantity] = useState('10');
+  const [quantity, setQuantity] = useState(defaultExpectedQty.toString());
   const [price, setPrice] = useState('');
   const [scanSource, setScanSource] = useState<'BARCODE' | 'QR_CODE' | 'OCR' | 'MANUAL'>('OCR');
   const [detectedLines, setDetectedLines] = useState<string[]>([]);
   const [rawCode, setRawCode] = useState('');
 
-  // Primary expected medicine in this PO
-  const primaryItem = shipment.items[0]?.product;
-
-  // Helper to match scanned string against products in this PO
+  // Helper to match scanned string against products in this PO/Order
   const findMatchingPoItem = (query: string) => {
     const q = query.toLowerCase().trim();
     if (!q) return null;
-    return shipment.items.find(
+    return expectedItemsList.find(
       (item) =>
         item.product?.name.toLowerCase().includes(q) ||
         item.product?.sku.toLowerCase().includes(q) ||
@@ -86,10 +125,10 @@ export default function ScannerScreen({
     setRawCode(data);
     setProductName(decoded.productName || matchedItem?.product?.name || primaryItem?.name || '');
     setSku(decoded.sku || matchedItem?.product?.sku || primaryItem?.sku || '');
-    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
+    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || defaultExpectedBatch);
     setMfgDate(decoded.mfgDate || '');
     setExpiryDate(decoded.expiryDate || '');
-    setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
+    setQuantity((matchedItem?.expectedQty || defaultExpectedQty).toString());
     setPrice(decoded.price ? decoded.price.toString() : '');
     setDetectedLines([]);
     setShowResultModal(true);
@@ -153,7 +192,7 @@ export default function ScannerScreen({
       const detectedName = ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' && ocrData.medicineName !== 'No text detected' ? ocrData.medicineName : '';
       const finalName = detectedName || matchedItem?.product?.name || primaryItem?.name || '';
       const finalSku = ocrData.sku || matchedItem?.product?.sku || primaryItem?.sku || '';
-      const finalBatch = ocrData.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '';
+      const finalBatch = ocrData.batchNumber || matchedItem?.expectedBatch || defaultExpectedBatch;
       const finalMfg = ocrData.mfgDate || '';
       const finalExp = ocrData.expiryDate || '';
 
@@ -162,7 +201,7 @@ export default function ScannerScreen({
       setBatchNumber(finalBatch);
       setMfgDate(finalMfg);
       setExpiryDate(finalExp);
-      setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
+      setQuantity((matchedItem?.expectedQty || defaultExpectedQty).toString());
       setPrice(ocrData.mrp ? ocrData.mrp.toString() : '');
       setDetectedLines([]);
       setShowResultModal(true);
@@ -194,10 +233,10 @@ export default function ScannerScreen({
     setRawCode(manualCode.trim());
     setProductName(decoded.productName || matchedItem?.product?.name || primaryItem?.name || '');
     setSku(decoded.sku || matchedItem?.product?.sku || manualCode.trim());
-    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || shipment.items[0]?.expectedBatch || '');
+    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || defaultExpectedBatch);
     setMfgDate('');
     setExpiryDate(decoded.expiryDate || '');
-    setQuantity((matchedItem?.expectedQty || shipment.items[0]?.expectedQty || 10).toString());
+    setQuantity((matchedItem?.expectedQty || defaultExpectedQty).toString());
     setPrice('');
     setDetectedLines([]);
 
@@ -206,7 +245,7 @@ export default function ScannerScreen({
     setShowResultModal(true);
   };
 
-  // 4. Confirm Receiving of This Item
+  // 4. Confirm Receiving / Picking of This Item
   const handleConfirmReceiving = () => {
     if (!productName.trim()) {
       Alert.alert('Validation Error', 'Product Name is required.');
@@ -216,13 +255,13 @@ export default function ScannerScreen({
       Alert.alert('Validation Error', 'Batch / Lot Number is required for pharma tracking.');
       return;
     }
-    if (!expiryDate.trim()) {
+    if (!expiryDate.trim() && !isPickMode) {
       Alert.alert('Validation Error', 'Expiry Date is required for pharmaceutical tracking (e.g. MM/YYYY).');
       return;
     }
     const numQty = parseInt(quantity, 10);
     if (isNaN(numQty) || numQty <= 0) {
-      Alert.alert('Validation Error', 'Please enter a valid received quantity greater than 0.');
+      Alert.alert('Validation Error', 'Please enter a valid quantity greater than 0.');
       return;
     }
 
@@ -237,13 +276,13 @@ export default function ScannerScreen({
       expiryDate: expiryDate.trim() || undefined,
       quantity: numQty,
       price: price.trim() || undefined,
-      poNumber: poNumber.trim() || shipment.poNumber,
+      poNumber: poNumber.trim() || targetCode,
       barcode: rawCode || undefined,
       confidence: 0.95,
       rawText: detectedLines.join('\n'),
     };
 
-    onProceedToValidate(extractedData, shipment);
+    onProceedToValidate(extractedData, shipment, order);
   };
 
   // 5. Reset Scanner for Next Scan
@@ -269,15 +308,145 @@ export default function ScannerScreen({
           </View>
           <Text style={styles.permissionTitle}>Camera Access Required</Text>
           <Text style={styles.permissionDesc}>
-            Goods Reception requires camera access to scan barcodes, QR codes, and extract medicine package text with OCR.
+            {isPickMode
+              ? 'Pick & Pack requires camera access to scan medicine packages, barcodes, and verify items for customer dispatch.'
+              : 'Goods Reception requires camera access to scan barcodes, QR codes, and extract medicine package text with OCR.'}
           </Text>
           <TouchableOpacity style={styles.permissionButton} onPress={requestPermission} activeOpacity={0.8}>
             <Text style={styles.permissionButtonText}>Grant Camera Permission</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.permissionButton, { backgroundColor: '#334155', marginTop: 10 }]}
+            onPress={() => setShowManualModal(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="keypad-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+            <Text style={styles.permissionButtonText}>Enter SKU / Barcode Manually</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.permissionCancelButton} onPress={onBack} activeOpacity={0.7}>
-            <Text style={styles.permissionCancelText}>Go Back to POs</Text>
+            <Text style={styles.permissionCancelText}>Go Back to {isPickMode ? 'Orders' : 'POs'}</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Allow Manual Entry Modal even when camera permission is not yet granted */}
+        <Modal
+          visible={showManualModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowManualModal(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Manual Identifier Entry</Text>
+              <Text style={styles.modalSubtitle}>
+                Enter Barcode / SKU manually for {isPickMode ? 'order picking' : 'reception'}.
+              </Text>
+
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g. MED-PARA-500 or 08901234567890"
+                placeholderTextColor="#64748B"
+                value={manualCode}
+                onChangeText={setManualCode}
+                autoCapitalize="characters"
+                autoFocus
+              />
+
+              {expectedItemsList.length > 0 && (
+                <View style={styles.quickPickSection}>
+                  <Text style={styles.quickPickLabel}>Expected in this {isPickMode ? 'Order' : 'PO'}:</Text>
+                  {expectedItemsList.map((item) => {
+                    const prod = item.product;
+                    if (!prod) return null;
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.quickPickItem}
+                        onPress={() => setManualCode(prod.sku)}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="medical" size={14} color="#38BDF8" style={{ marginRight: 6 }} />
+                        <Text style={styles.quickPickItemName}>{prod.name}</Text>
+                        <Text style={styles.quickPickItemSku}>({prod.sku})</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.retakeButton}
+                  onPress={() => {
+                    setShowManualModal(false);
+                    setManualCode('');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.retakeButtonText}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.validateButton}
+                  onPress={handleManualSubmit}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.validateButtonText}>Submit Code</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Verification Modal for Manual Input on Permission Screen */}
+        <Modal
+          visible={showResultModal}
+          transparent
+          animationType="slide"
+          onRequestClose={handleScanAgain}
+        >
+          <KeyboardAvoidingView
+            style={styles.modalBackdrop}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalHeaderTitleGroup}>
+                  <Text style={styles.modalTitle}>{isPickMode ? 'Verify Item to Pick' : 'Receive Medicine for PO'}</Text>
+                </View>
+                <TouchableOpacity onPress={handleScanAgain} style={styles.modalCloseButton}>
+                  <Ionicons name="close" size={20} color="#94A3B8" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <View style={styles.inputGroup}>
+                  <Text style={styles.fieldLabel}>Product Name *</Text>
+                  <TextInput style={styles.fieldInput} value={productName} onChangeText={setProductName} />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.fieldLabel}>SKU *</Text>
+                  <TextInput style={styles.fieldInput} value={sku} onChangeText={setSku} />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.fieldLabel}>Batch / Lot *</Text>
+                  <TextInput style={styles.fieldInput} value={batchNumber} onChangeText={setBatchNumber} />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.fieldLabel}>Quantity *</Text>
+                  <TextInput style={styles.fieldInput} value={quantity} onChangeText={setQuantity} keyboardType="numeric" />
+                </View>
+              </ScrollView>
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={styles.retakeButton} onPress={handleScanAgain} activeOpacity={0.7}>
+                  <Text style={styles.retakeButtonText}>Back</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.validateButton} onPress={handleConfirmReceiving} activeOpacity={0.85}>
+                  <Text style={styles.validateButtonText}>Proceed to Validate</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -307,9 +476,9 @@ export default function ScannerScreen({
             <Ionicons name="arrow-back" size={22} color="#FFFFFF" />
           </TouchableOpacity>
 
-          <View style={styles.poPill}>
-            <Ionicons name="document-text" size={14} color="#38BDF8" style={{ marginRight: 6 }} />
-            <Text style={styles.poPillText}>{shipment.poNumber}</Text>
+          <View style={[styles.poPill, isPickMode && { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#F59E0B' }]}>
+            <Ionicons name={isPickMode ? 'cart' : 'document-text'} size={14} color={isPickMode ? '#F59E0B' : '#38BDF8'} style={{ marginRight: 6 }} />
+            <Text style={[styles.poPillText, isPickMode && { color: '#F59E0B' }]}>{targetCode}</Text>
           </View>
 
           <TouchableOpacity
@@ -376,7 +545,7 @@ export default function ScannerScreen({
           <View style={styles.modeIndicator}>
             <View style={styles.liveDot} />
             <Text style={styles.modeText}>Active</Text>
-            <Text style={styles.modeTextSub}>PO Reception</Text>
+            <Text style={styles.modeTextSub}>{isPickMode ? 'Pick & Pack' : 'PO Reception'}</Text>
           </View>
         </View>
       </SafeAreaView>
@@ -449,7 +618,7 @@ export default function ScannerScreen({
                       : 'Barcode Captured'}
                   </Text>
                 </View>
-                <Text style={styles.modalTitle}>Receive Medicine for PO</Text>
+                <Text style={styles.modalTitle}>{isPickMode ? 'Verify Item to Pick' : 'Receive Medicine for PO'}</Text>
               </View>
 
               <TouchableOpacity onPress={handleScanAgain} style={styles.modalCloseButton}>
@@ -463,15 +632,15 @@ export default function ScannerScreen({
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              {/* Field 1: Purchase Order & Supplier (Read-Only Context) */}
+              {/* Field 1: Reference Code & Partner (Read-Only Context) */}
               <View style={styles.poSummaryCard}>
                 <View style={styles.poSummaryRow}>
-                  <Text style={styles.poSummaryLabel}>Purchase Order (PO):</Text>
-                  <Text style={styles.poSummaryValue}>{poNumber || shipment.poNumber}</Text>
+                  <Text style={styles.poSummaryLabel}>{isPickMode ? 'Order Number:' : 'Purchase Order (PO):'}</Text>
+                  <Text style={styles.poSummaryValue}>{poNumber || targetCode}</Text>
                 </View>
                 <View style={styles.poSummaryRow}>
-                  <Text style={styles.poSummaryLabel}>Supplier / Vendor:</Text>
-                  <Text style={styles.poSummaryValueSub}>{shipment.supplierName}</Text>
+                  <Text style={styles.poSummaryLabel}>{isPickMode ? 'Customer / Hospital:' : 'Supplier / Vendor:'}</Text>
+                  <Text style={styles.poSummaryValueSub}>{partnerName}</Text>
                 </View>
               </View>
 
@@ -676,11 +845,11 @@ export default function ScannerScreen({
               autoFocus
             />
 
-            {/* Quick Pick from Expected Items in PO */}
-            {shipment.items.length > 0 && (
+            {/* Quick Pick from Expected Items in PO / Order */}
+            {expectedItemsList.length > 0 && (
               <View style={styles.quickPickSection}>
-                <Text style={styles.quickPickLabel}>Expected in this PO:</Text>
-                {shipment.items.map((item) => {
+                <Text style={styles.quickPickLabel}>Expected in this {isPickMode ? 'Order' : 'PO'}:</Text>
+                {expectedItemsList.map((item) => {
                   const prod = item.product;
                   if (!prod) return null;
                   return (

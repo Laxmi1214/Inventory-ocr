@@ -65,6 +65,130 @@ function startPythonOcrService() {
 // Start Python OCR microservice
 startPythonOcrService();
 
+// In-Memory Master Store for Outbound Customer Orders (Pick & Pack)
+let outboundOrdersStore = [
+  {
+    id: 'ord-001',
+    orderNumber: 'ORD-2026-4412',
+    customerName: 'Apollo Hospitals - Central Pharmacy',
+    status: 'PENDING',
+    priority: 'URGENT',
+    deliveryDate: new Date(Date.now() + 86400000).toISOString(),
+    notes: 'Urgent ICU replenishment. Verify tamper seal and expiry.',
+    items: [
+      {
+        id: 'ord-item-001',
+        productName: 'Paracetamol 500mg Tablets',
+        sku: 'MED-PARA-500',
+        requiredQty: 20,
+        pickedQty: 0,
+        status: 'PENDING',
+        suggestedBatch: 'BTH-PAR-26045',
+      }
+    ]
+  },
+  {
+    id: 'ord-002',
+    orderNumber: 'ORD-2026-4413',
+    customerName: 'Fortis Healthcare - Pediatric Wing',
+    status: 'PENDING',
+    priority: 'COLD_CHAIN',
+    deliveryDate: new Date(Date.now() + 172800000).toISOString(),
+    notes: 'Pediatric suspension order. Maintain ambient temp below 25°C.',
+    items: [
+      {
+        id: 'ord-item-002',
+        productName: 'Amoxicillin 250mg Suspension',
+        sku: 'MED-AMOX-250',
+        requiredQty: 15,
+        pickedQty: 0,
+        status: 'PENDING',
+        suggestedBatch: 'AMX-9082',
+      }
+    ]
+  },
+  {
+    id: 'ord-003',
+    orderNumber: 'ORD-2026-4414',
+    customerName: 'Manipal Hospitals - Outpatient Dept',
+    status: 'PENDING',
+    priority: 'NORMAL',
+    deliveryDate: new Date(Date.now() + 259200000).toISOString(),
+    notes: 'Inpatient fever management stock replenishment.',
+    items: [
+      {
+        id: 'ord-item-003',
+        productName: 'Dolo 650 Paracetamol Tablets',
+        sku: 'MED-DOLO-650',
+        requiredQty: 50,
+        pickedQty: 0,
+        status: 'PENDING',
+        suggestedBatch: 'BTH-DOLO-8821',
+      }
+    ]
+  },
+  {
+    id: 'ord-004',
+    orderNumber: 'ORD-2026-4415',
+    customerName: 'MIOT International - Acute Care',
+    status: 'PENDING',
+    priority: 'URGENT',
+    deliveryDate: new Date(Date.now() + 345600000).toISOString(),
+    notes: 'Antidiarrheal emergency ward replenishment.',
+    items: [
+      {
+        id: 'ord-item-004',
+        productName: 'Loperamide 2mg Capsules',
+        sku: 'MED-LOPE-002',
+        requiredQty: 30,
+        pickedQty: 0,
+        status: 'PENDING',
+        suggestedBatch: 'BTH-LOP-9901',
+      }
+    ]
+  },
+  {
+    id: 'ord-005',
+    orderNumber: 'ORD-2026-4416',
+    customerName: 'Kauvery Hospital - Emergency Ward',
+    status: 'PENDING',
+    priority: 'NORMAL',
+    deliveryDate: new Date(Date.now() + 432000000).toISOString(),
+    notes: 'Emergency unit bulk order.',
+    items: [
+      {
+        id: 'ord-item-005',
+        productName: 'Dolo 650 Paracetamol Tablets',
+        sku: 'MED-DOLO-650',
+        requiredQty: 25,
+        pickedQty: 0,
+        status: 'PENDING',
+        suggestedBatch: 'BTH-DOLO-8821',
+      }
+    ]
+  },
+  {
+    id: 'ord-006',
+    orderNumber: 'ORD-2026-4417',
+    customerName: 'SIMS Hospital - Inpatient Pharmacy',
+    status: 'PENDING',
+    priority: 'URGENT',
+    deliveryDate: new Date(Date.now() + 518400000).toISOString(),
+    notes: 'Inpatient general ward batch delivery.',
+    items: [
+      {
+        id: 'ord-item-006',
+        productName: 'Paracetamol 500mg Tablets',
+        sku: 'MED-PARA-500',
+        requiredQty: 40,
+        pickedQty: 0,
+        status: 'PENDING',
+        suggestedBatch: 'BATCH123',
+      }
+    ]
+  }
+];
+
 // Helper to read request body JSON
 function parseJsonBody(req) {
   return new Promise((resolve, reject) => {
@@ -300,6 +424,20 @@ const server = http.createServer(async (req, res) => {
       console.error('[DB SHIPMENTS ERROR]:', shipErr.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: shipErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 4.5: Get All Outbound Customer Orders (Pick & Pack)
+  // -------------------------------------------------------------
+  if (req.method === 'GET' && (urlPath === '/api/v1/orders' || urlPath === '/api/v1/picking/orders')) {
+    try {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, orders: outboundOrdersStore }));
+    } catch (orderErr) {
+      console.error('[DB ORDERS ERROR]:', orderErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: orderErr.message }));
     }
   }
 
@@ -615,33 +753,57 @@ const server = http.createServer(async (req, res) => {
       const product = prodRows[0];
 
       // 2. Find Batch
-      let batchRows = await sql`
-        SELECT id, batch_number, expiry_date, status FROM public.batches
-        WHERE product_id = ${product.id} AND UPPER(batch_number) = ${cleanBatch}
-        LIMIT 1
-      `;
-      if (batchRows.length === 0) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: `Batch "${cleanBatch}" of ${product.name} not found in database.` }));
-      }
-      const batch = batchRows[0];
+      let batch = null;
+      let inventoryRow = null;
 
-      // 3. Find and check Inventory stock
-      let invRows = await sql`
-        SELECT id, quantity, location_code FROM public.inventory
-        WHERE product_id = ${product.id} AND batch_id = ${batch.id}
-        LIMIT 1
-      `;
-      if (invRows.length === 0 || invRows[0].quantity <= 0) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ success: false, error: `No available stock for batch ${cleanBatch} of ${product.name}.` }));
+      if (cleanBatch) {
+        let batchRows = await sql`
+          SELECT id, batch_number, expiry_date, status FROM public.batches
+          WHERE product_id = ${product.id} AND UPPER(batch_number) = ${cleanBatch}
+          LIMIT 1
+        `;
+        if (batchRows.length > 0) {
+          batch = batchRows[0];
+          let invRows = await sql`
+            SELECT id, quantity, location_code FROM public.inventory
+            WHERE product_id = ${product.id} AND batch_id = ${batch.id}
+            LIMIT 1
+          `;
+          if (invRows.length > 0) {
+            inventoryRow = invRows[0];
+          }
+        }
       }
-      const inventoryRow = invRows[0];
+
+      // If specific batch not found or has no inventory, pick earliest expiring batch with stock (FIFO)
+      if (!batch || !inventoryRow) {
+        let availableBatches = await sql`
+          SELECT b.id, b.batch_number, b.expiry_date, b.status, inv.id as inv_id, inv.quantity, inv.location_code
+          FROM public.batches b
+          JOIN public.inventory inv ON inv.batch_id = b.id
+          WHERE b.product_id = ${product.id} AND inv.quantity > 0
+          ORDER BY b.expiry_date ASC
+          LIMIT 1
+        `;
+        if (availableBatches.length > 0) {
+          const row = availableBatches[0];
+          batch = { id: row.id, batch_number: row.batch_number, expiry_date: row.expiry_date, status: row.status };
+          inventoryRow = { id: row.inv_id, quantity: row.quantity, location_code: row.location_code };
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({
+            success: false,
+            error: `No inventory stock available for product "${product.name}". Please receive stock before dispatching.`
+          }));
+        }
+      }
+
+      // 3. Check Inventory stock
       if (inventoryRow.quantity < numQty) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
           success: false,
-          error: `Insufficient stock! Requested: ${numQty}, Available: ${inventoryRow.quantity}`
+          error: `Insufficient stock for batch ${batch.batch_number}! Requested: ${numQty}, Available: ${inventoryRow.quantity}`
         }));
       }
 
@@ -665,14 +827,29 @@ const server = http.createServer(async (req, res) => {
       }
 
       // 6. Record OUTBOUND Transaction
-      const noteText = notes || `Outbound dispatch: ${orderNumber || 'Order'} - ${numQty} units of ${product.name} (Batch: ${cleanBatch})`;
+      const noteText = notes || `Outbound dispatch: ${orderNumber || 'Order'} - ${numQty} units of ${product.name} (Batch: ${batch.batch_number})`;
       const txRows = await sql`
         INSERT INTO public.inventory_transactions (product_id, batch_id, type, quantity, notes, created_by)
         VALUES (${product.id}, ${batch.id}, 'OUTBOUND', ${numQty}, ${noteText}, ${validUserId})
         RETURNING id, product_id, batch_id, type, quantity, notes, created_by, created_at
       `;
 
-      console.log(`[DB DISPATCH SUCCESS] Dispatched ${numQty} units of ${product.name} (Batch: ${cleanBatch}). Remaining stock: ${updatedInv[0].quantity}`);
+      console.log(`[DB DISPATCH SUCCESS] Dispatched ${numQty} units of ${product.name} (Batch: ${batch.batch_number}). Remaining stock: ${updatedInv[0].quantity}`);
+
+      // Update outbound order in memory if orderNumber is matched
+      if (orderNumber) {
+        const order = outboundOrdersStore.find(o => o.orderNumber.toUpperCase() === orderNumber.trim().toUpperCase());
+        if (order) {
+          const item = order.items.find(i => i.sku.toUpperCase() === cleanSku.toUpperCase() || i.productName.toLowerCase() === cleanProdName.toLowerCase()) || order.items[0];
+          if (item) {
+            item.pickedQty = (item.pickedQty || 0) + numQty;
+            item.status = item.pickedQty >= item.requiredQty ? 'COMPLETED' : 'IN_PROGRESS';
+          }
+          const allCompleted = order.items.every(i => i.status === 'COMPLETED');
+          order.status = allCompleted ? 'DISPATCHED' : 'IN_PROGRESS';
+          console.log(`[OUTBOUND ORDER UPDATE] Order ${order.orderNumber} status is now: ${order.status}`);
+        }
+      }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
