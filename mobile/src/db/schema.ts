@@ -134,6 +134,30 @@ export const inventoryTransactions = pgTable('inventory_transactions', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * 7. Stock Counts / Physical Audits Table
+ * Tracks physical stock counts vs system stock, variance calculation, and supervisor review
+ */
+export const stockAudits = pgTable('stock_audits', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  inventoryId: uuid('inventory_id').references(() => inventory.id, { onDelete: 'cascade' }),
+  productId: uuid('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
+  batchId: uuid('batch_id').references(() => batches.id, { onDelete: 'set null' }),
+  locationCode: varchar('location_code', { length: 100 }).notNull().default('BAY-01'),
+  systemQty: integer('system_qty').notNull(),
+  physicalQty: integer('physical_qty').notNull(),
+  variance: integer('variance').notNull(), // physicalQty - systemQty
+  status: varchar('status', { length: 50 }).notNull().default('MATCHED'), // 'MATCHED' | 'PENDING_SUPERVISOR_APPROVAL' | 'APPROVED' | 'REJECTED'
+  countedBy: varchar('counted_by', { length: 100 }).references(() => users.id),
+  supervisorId: varchar('supervisor_id', { length: 100 }).references(() => users.id),
+  supervisorNotes: text('supervisor_notes'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Relationships
 export const rolesRelations = relations(roles, ({ many }) => ({
   users: many(users),
@@ -233,3 +257,6 @@ export type NewInventory = typeof inventory.$inferInsert;
 
 export type InventoryTransaction = typeof inventoryTransactions.$inferSelect;
 export type NewInventoryTransaction = typeof inventoryTransactions.$inferInsert;
+
+export type StockAudit = typeof stockAudits.$inferSelect;
+export type NewStockAudit = typeof stockAudits.$inferInsert;

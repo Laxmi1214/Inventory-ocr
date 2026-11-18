@@ -8,8 +8,11 @@ import TaskDetailScreen, { TaskInfo } from './src/screens/TaskDetailScreen';
 import ReceivingPOScreen from './src/screens/ReceivingPOScreen';
 import ScannerScreen from './src/screens/ScannerScreen';
 import ValidationScreen from './src/screens/ValidationScreen';
+import StockCountListScreen from './src/screens/StockCountListScreen';
+import StockCountAuditScreen from './src/screens/StockCountAuditScreen';
 import { InboundShipmentWithItems, flagShipmentDiscrepancy } from './src/services/receiving';
 import { ExtractedLabelData } from './src/services/ocr';
+import { StockAuditTask } from './src/services/auditService';
 import { recordMedicineMovement } from './src/services/inventoryService';
 import {
   getActiveSessionUser,
@@ -25,6 +28,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [selectedTaskType, setSelectedTaskType] = useState<string | null>(null);
   const [selectedShipment, setSelectedShipment] = useState<InboundShipmentWithItems | null>(null);
+  const [selectedAuditTask, setSelectedAuditTask] = useState<StockAuditTask | null>(null);
   const [pendingValidation, setPendingValidation] = useState<{
     extractedData: ExtractedLabelData;
     shipment: InboundShipmentWithItems;
@@ -252,6 +256,22 @@ export default function App() {
               onSelectPO={(shipment: InboundShipmentWithItems) => {
                 setSelectedShipment(shipment);
               }}
+            />
+          )
+        ) : selectedTaskType === 'STOCK_COUNT' ? (
+          selectedAuditTask ? (
+            <StockCountAuditScreen
+              task={selectedAuditTask}
+              userId={currentUser?.id}
+              onBack={() => setSelectedAuditTask(null)}
+              onAuditCompleted={(msg) => {
+                setSelectedAuditTask(null);
+              }}
+            />
+          ) : (
+            <StockCountListScreen
+              onBack={() => setSelectedTaskType(null)}
+              onSelectTask={(task) => setSelectedAuditTask(task)}
             />
           )
         ) : selectedTaskType ? (

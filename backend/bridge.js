@@ -725,6 +725,207 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
+  // Route 6.1: Workflow 3 - Get Real Inventory Items for Stock Audit
+  // -------------------------------------------------------------
+  if (req.method === 'GET' && urlPath === '/api/v1/audit/tasks') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const items = await sql`
+        SELECT 
+          i.id AS "inventoryId",
+          i.location_code AS "locationCode",
+          i.quantity AS "systemQty",
+          i.updated_at AS "lastUpdatedAt",
+          p.id AS "productId",
+          p.name AS "productName",
+          p.sku,
+          p.barcode,
+          p.unit,
+          p.pack_size AS "packSize",
+          b.id AS "batchId",
+          b.batch_number AS "batchNumber",
+          b.expiry_date AS "expiryDate",
+          b.status AS "batchStatus",
+          (
+            SELECT json_build_object(
+              'id', sa.id,
+              'variance', sa.variance,
+              'status', sa.status,
+              'createdAt', sa.created_at
+            )
+            FROM public.stock_audits sa
+            WHERE sa.inventory_id = i.id
+            ORDER BY sa.created_at DESC
+            LIMIT 1
+          ) AS "lastAudit"
+        FROM public.inventory i
+        JOIN public.products p ON p.id = i.product_id
+        JOIN public.batches b ON b.id = i.batch_id
+        ORDER BY i.location_code ASC, p.name ASC
+      `;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, count: items.length, tasks: items }));
+    } catch (auditErr) {
+      console.error('[DB AUDIT TASKS ERROR]:', auditErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: auditErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.2: Workflow 3 - Submit Physical Stock Count & Variance
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/audit/submit') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const {
+        inventoryId,
+        productId,
+        batchId,
+        locationCode = 'BAY-01',
+        systemQty,
+        physicalQty,
+        notes = '',
+        userId
+      } = body;
+
+      const numSysQty = parseInt(systemQty, 10);
+      const numPhysQty = parseInt(physicalQty, 10);
+
+      if (isNaN(numSysQty) || isNaN(numPhysQty) || numPhysQty < 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          success: false,
+          error: 'Valid non-negative physical count and system quantity required'
+        }));
+      }
+
+      // Calculate variance: physical - system
+      const variance = numPhysQty - numSysQty;
+      const isMatched = variance === 0;
+      const auditStatus = isMatched ? 'MATCHED' : 'PENDING_SUPERVISOR_APPROVAL';
+
+      // Verify user id for foreign key
+      let validUserId = null;
+      if (userId) {
+        const userCheck = await sql`SELECT id FROM public.users WHERE id = ${userId} OR LOWER(username) = ${String(userId).toLowerCase()} LIMIT 1`;
+        if (userCheck.length > 0) validUserId = userCheck[0].id;
+      }
+      if (!validUserId) {
+        const anyUser = await sql`SELECT id FROM public.users LIMIT 1`;
+        if (anyUser.length > 0) validUserId = anyUser[0].id;
+      }
+
+      // Insert into stock_audits
+      const insertedAudit = await sql`
+        INSERT INTO public.stock_audits (
+          inventory_id,
+          product_id,
+          batch_id,
+          location_code,
+          system_qty,
+          physical_qty,
+          variance,
+          status,
+          counted_by,
+          notes
+        )
+        VALUES (
+          ${inventoryId || null},
+          ${productId},
+          ${batchId || null},
+          ${locationCode},
+          ${numSysQty},
+          ${numPhysQty},
+          ${variance},
+          ${auditStatus},
+          ${validUserId},
+          ${notes}
+        )
+        RETURNING id, inventory_id, product_id, batch_id, location_code, system_qty, physical_qty, variance, status, created_at
+      `;
+
+      // Log transaction if matched
+      if (isMatched) {
+        await sql`
+          INSERT INTO public.inventory_transactions (product_id, batch_id, type, quantity, notes, created_by)
+          VALUES (${productId}, ${batchId || null}, 'ADJUSTMENT', 0, ${'Physical stock count audit verified - 100% match (' + numPhysQty + ' units)'}, ${validUserId})
+        `;
+        console.log(`[AUDIT SUCCESS] 100% Match confirmed for inventory item ${inventoryId}. System: ${numSysQty}, Physical: ${numPhysQty}`);
+      } else {
+        console.log(`[AUDIT VARIANCE DETECTED] Variance of ${variance} units. Routed to Supervisor Review. Audit ID: ${insertedAudit[0].id}`);
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        matched: isMatched,
+        variance,
+        status: auditStatus,
+        message: isMatched
+          ? 'Stock count verified & matched 100%. Audit confirmed.'
+          : `Variance of ${variance > 0 ? '+' : ''}${variance} units detected. Discrepancy report routed to Supervisor for investigation.`,
+        audit: insertedAudit[0]
+      }));
+    } catch (submitErr) {
+      console.error('[DB AUDIT SUBMIT ERROR]:', submitErr);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: submitErr.message || 'Audit submission failed' }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.3: Workflow 3 - Get Stock Audit History & Pending Approvals
+  // -------------------------------------------------------------
+  if (req.method === 'GET' && urlPath === '/api/v1/audit/history') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const history = await sql`
+        SELECT 
+          sa.id,
+          sa.location_code AS "locationCode",
+          sa.system_qty AS "systemQty",
+          sa.physical_qty AS "physicalQty",
+          sa.variance,
+          sa.status,
+          sa.notes,
+          sa.created_at AS "createdAt",
+          p.name AS "productName",
+          p.sku,
+          b.batch_number AS "batchNumber",
+          u.username AS "countedByUser"
+        FROM public.stock_audits sa
+        JOIN public.products p ON p.id = sa.product_id
+        LEFT JOIN public.batches b ON b.id = sa.batch_id
+        LEFT JOIN public.users u ON u.id = sa.counted_by
+        ORDER BY sa.created_at DESC
+        LIMIT 50
+      `;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, count: history.length, history }));
+    } catch (histErr) {
+      console.error('[DB AUDIT HISTORY ERROR]:', histErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: histErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
   // Route 7: Forward All Other Requests to Python FastAPI (OCR)
   // -------------------------------------------------------------
   const options = {
