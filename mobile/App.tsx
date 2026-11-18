@@ -6,12 +6,14 @@ import SignupScreen from './src/screens/SignupScreen';
 import DashboardScreen, { UserSession } from './src/screens/DashboardScreen';
 import TaskDetailScreen, { TaskInfo } from './src/screens/TaskDetailScreen';
 import ReceivingPOScreen from './src/screens/ReceivingPOScreen';
+import PickPackOrdersScreen from './src/screens/PickPackOrdersScreen';
 import ScannerScreen from './src/screens/ScannerScreen';
 import ValidationScreen from './src/screens/ValidationScreen';
 import StockCountListScreen from './src/screens/StockCountListScreen';
 import StockCountAuditScreen from './src/screens/StockCountAuditScreen';
 import SupervisorExceptionScreen from './src/screens/SupervisorExceptionScreen';
 import { InboundShipmentWithItems, flagShipmentDiscrepancy } from './src/services/receiving';
+import { OutboundOrder, dispatchOrderItem } from './src/services/dispatch';
 import { ExtractedLabelData } from './src/services/ocr';
 import { StockAuditTask } from './src/services/auditService';
 import { recordMedicineMovement } from './src/services/inventoryService';
@@ -34,7 +36,6 @@ export default function App() {
     extractedData: ExtractedLabelData;
     shipment: InboundShipmentWithItems;
   } | null>(null);
-  const [isViewingSupervisorExceptions, setIsViewingSupervisorExceptions] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -102,6 +103,9 @@ export default function App() {
     setCurrentUser(user);
     setSelectedTaskType(null);
     setSelectedShipment(null);
+    setSelectedOrder(null);
+    setPendingValidation(null);
+    setPendingOrderValidation(null);
   };
 
   const handleLogout = async () => {
@@ -113,19 +117,18 @@ export default function App() {
     setCurrentUser(null);
     setSelectedTaskType(null);
     setSelectedShipment(null);
-    setSelectedAuditTask(null);
-    setPendingValidation(null);
-    setIsViewingSupervisorExceptions(false);
     setCurrentScreen('login');
   };
 
   // Goods Reception Proceed to Validation Step
   const handleProceedToValidate = (
     extractedData: ExtractedLabelData,
-    shipment: InboundShipmentWithItems
+    shipment?: InboundShipmentWithItems
   ) => {
     // Directs operator to the Validation Step to match physical item vs PO records
-    setPendingValidation({ extractedData, shipment });
+    if (shipment) {
+      setPendingValidation({ extractedData, shipment });
+    }
   };
 
   // Goods Reception Verified Intake: Add to Inventory Table
@@ -216,11 +219,83 @@ export default function App() {
     }
   };
 
+  // Pick & Pack Outbound Dispatch: Deduct from Inventory Table
+  const handleDispatchValidatedOrder = async (
+    validatedData: ExtractedLabelData,
+    order: OutboundOrder
+  ) => {
+    const prodName = validatedData.productName || order.items[0]?.productName || 'Pharmaceutical Item';
+    const batch = validatedData.batchNumber || order.items[0]?.suggestedBatch || 'BATCH-PICK';
+    const sku = validatedData.sku || order.items[0]?.sku || '';
+    const qty = validatedData.quantity || order.items[0]?.requiredQty || 10;
+
+    try {
+      const result = await dispatchOrderItem({
+        orderNumber: order.orderNumber,
+        productName: prodName,
+        sku,
+        batchNumber: batch,
+        quantity: qty,
+        userId: currentUser?.id,
+        userName: currentUser?.fullName || currentUser?.username || 'Operator',
+        notes: `Order ${order.orderNumber} picked & packed for ${order.customerName} via ${validatedData.source}`,
+      });
+
+      if (!result.success) {
+        Alert.alert('Dispatch Error', result.error || 'Failed to dispatch stock from inventory.');
+        return;
+      }
+
+      Alert.alert(
+        'Order Dispatched Successfully',
+        `• Order Number: ${order.orderNumber}\n` +
+          `• Customer: ${order.customerName}\n` +
+          `• Product: ${prodName}\n` +
+          `• SKU: ${sku || 'N/A'}\n` +
+          `• Batch / Lot: ${batch}\n` +
+          `• Quantity Dispatched: -${qty} units\n` +
+          `• Status: PACKED & READY FOR COURIER\n\n` +
+          `Stock successfully deducted from active inventory table!`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              setPendingOrderValidation(null);
+              setSelectedOrder(null);
+              setSelectedTaskType(null);
+            },
+          },
+        ]
+      );
+    } catch (err: any) {
+      Alert.alert('Dispatch Error', err?.message || 'Failed to update inventory balance.');
+    }
+  };
+
   const handleStartScan = (task: TaskInfo) => {
-    Alert.alert(
-      'Scanner',
-      `Ready to scan for:\n${task.title}\nProduct: ${task.expectedItem}\nSKU: ${task.expectedSku}\nTarget Batch: ${task.expectedBatch || 'N/A'}`
-    );
+    // Directly launch real live CameraView ScannerScreen for this task
+    const orderFromTask: OutboundOrder = {
+      id: task.code,
+      orderNumber: task.code,
+      customerName: task.partnerOrDestination,
+      status: 'PENDING',
+      priority: 'URGENT',
+      deliveryDate: new Date().toISOString(),
+      notes: task.notes,
+      items: [
+        {
+          id: `item-${task.code}`,
+          productName: task.expectedItem,
+          sku: task.expectedSku,
+          requiredQty: task.expectedQty,
+          pickedQty: 0,
+          status: 'PENDING',
+          suggestedBatch: task.expectedBatch,
+        },
+      ],
+    };
+    setSelectedOrder(orderFromTask);
+    setSelectedTaskType('PICK_PACK');
   };
 
   if (isCheckingAuth) {
@@ -277,6 +352,42 @@ export default function App() {
             <StockCountListScreen
               onBack={() => setSelectedTaskType(null)}
               onSelectTask={(task) => setSelectedAuditTask(task)}
+        ) : selectedTaskType === 'PICK_PACK' ? (
+          pendingOrderValidation ? (
+            <ValidationScreen
+              order={pendingOrderValidation.order}
+              mode="PICK_PACK"
+              extractedData={pendingOrderValidation.extractedData}
+              onBack={() => setPendingOrderValidation(null)}
+              onConfirmDispatchStock={async (validatedData, order) => {
+                await handleDispatchValidatedOrder(validatedData, order);
+              }}
+              onFlagDiscrepancy={async (reasons, notes) => {
+                Alert.alert(
+                  'Order Item Discrepancy',
+                  `Order ${pendingOrderValidation.order.orderNumber} flagged:\n\n• ${reasons.join('\n• ')}\n\nGoods not dispatched.`
+                );
+                setPendingOrderValidation(null);
+                setSelectedOrder(null);
+              }}
+            />
+          ) : selectedOrder ? (
+            <ScannerScreen
+              order={selectedOrder}
+              mode="PICK_PACK"
+              onBack={() => setSelectedOrder(null)}
+              onProceedToValidate={(extractedData, _shipment, order) => {
+                if (order) {
+                  setPendingOrderValidation({ extractedData, order });
+                }
+              }}
+            />
+          ) : (
+            <PickPackOrdersScreen
+              onBack={() => setSelectedTaskType(null)}
+              onSelectOrder={(order: OutboundOrder) => {
+                setSelectedOrder(order);
+              }}
             />
           )
         ) : selectedTaskType ? (

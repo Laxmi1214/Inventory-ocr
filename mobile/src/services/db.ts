@@ -238,10 +238,27 @@ export async function registerUser(
       return { user: registeredUser };
     } catch (apiErr: any) {
       clearTimeout(timeoutId);
-      console.error('[DB REGISTER API ERROR]:', apiErr.message);
-      return {
-        error: `Cannot connect to Database server (${AUTH_API_URL}). Please verify backend is running on your PC. (${apiErr.message})`,
+      console.warn('[DB REGISTER API NOTICE]: Backend unreachable, using local storage fallback:', apiErr.message);
+
+      // Offline / Local storage fallback: Check if email already registered locally
+      const existingUsers = await getAllUsers();
+      if (existingUsers.some((u) => u.email.toLowerCase() === cleanEmail)) {
+        return { error: 'An account with this email address already exists' };
+      }
+
+      const registeredUser: UserRecord = {
+        id: `USR-LOCAL-${Date.now().toString().slice(-6)}`,
+        username: username.trim(),
+        email: cleanEmail,
+        password: password,
+        role: role || 'OPERATOR',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
+
+      // Save to local storage
+      await saveUsersToDB([...existingUsers.filter((u) => u.email !== cleanEmail), registeredUser]);
+      return { user: registeredUser };
     }
   } catch (err: any) {
     return { error: err?.message || 'Failed to register user in database' };
@@ -298,10 +315,11 @@ export async function loginUser(
       return { user: session };
     } catch (apiErr: any) {
       clearTimeout(timeoutId);
-      console.warn('[DB LOGIN API NOTICE]:', apiErr.message);
+      console.warn('[DB LOGIN API NOTICE]: Backend unreachable, trying local credentials:', apiErr.message);
 
-      // Check seed demo users if completely offline
       const query = emailOrUsername.trim().toLowerCase();
+
+      // 1. Check seed demo users if completely offline
       const demoUser = INITIAL_SEED_USERS.find(
         (u) =>
           (u.email.toLowerCase() === query || u.username.toLowerCase() === query) &&
@@ -320,8 +338,28 @@ export async function loginUser(
         return { user: session };
       }
 
+      // 2. Check local users registered in storage
+      const localUsers = await getAllUsers();
+      const localMatch = localUsers.find(
+        (u) =>
+          (u.email.toLowerCase() === query || u.username.toLowerCase() === query) &&
+          u.password === passwordInput
+      );
+
+      if (localMatch) {
+        const session: UserSession = {
+          id: localMatch.id,
+          username: localMatch.username,
+          fullName: localMatch.username,
+          email: localMatch.email,
+          role: localMatch.role,
+        };
+        await safeStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
+        return { user: session };
+      }
+
       return {
-        error: `Cannot connect to Database server (${AUTH_API_URL}). Please verify backend is running on your PC.`,
+        error: `Invalid email or password. (Offline mode verified)`,
       };
     }
   } catch (err: any) {

@@ -37,7 +37,7 @@ export interface OcrScanResult {
 const STORAGE_INVENTORY_KEY = '@congiotech_inventory_items_v1';
 const STORAGE_TRANSACTIONS_KEY = '@congiotech_inventory_transactions_v1';
 
-// Initial pre-loaded stock so dashboard has realistic pharma data immediately
+// Initial pre-loaded stock matching real database inventory
 const INITIAL_STOCK: Array<{
   id: string;
   name: string;
@@ -50,25 +50,33 @@ const INITIAL_STOCK: Array<{
     id: 'MED-1',
     name: 'Paracetamol 500mg Tablets',
     sku: 'MED-PARA-500',
-    batchNumber: 'PARA-2026-08',
-    expiryDate: '12/2027',
-    quantity: 450,
+    batchNumber: 'BTH-PAR-26045',
+    expiryDate: '12/2029',
+    quantity: 135,
   },
   {
     id: 'MED-2',
     name: 'Amoxicillin 250mg Suspension',
     sku: 'MED-AMOX-250',
     batchNumber: 'AMX-9082',
-    expiryDate: '06/2026',
-    quantity: 180,
+    expiryDate: '05/2039',
+    quantity: 50,
   },
   {
     id: 'MED-3',
-    name: 'Metformin Hydrochloride 500mg',
-    sku: 'MED-METF-500',
-    batchNumber: 'MET-4412',
-    expiryDate: '09/2028',
-    quantity: 320,
+    name: 'Dolo 650 Paracetamol Tablets',
+    sku: 'MED-DOLO-650',
+    batchNumber: 'BTH-DOLO-8821',
+    expiryDate: '10/2029',
+    quantity: 367,
+  },
+  {
+    id: 'MED-4',
+    name: 'Loperamide 2mg Capsules',
+    sku: 'MED-LOPE-002',
+    batchNumber: 'BTH-LOP-9901',
+    expiryDate: '11/2029',
+    quantity: 250,
   },
 ];
 
@@ -108,7 +116,7 @@ const INITIAL_TRANSACTIONS: MedicineTransaction[] = [
   },
 ];
 
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
 
 /**
  * Fetch inventory metrics: Total In Stock, Total Income (Inbound), Total Go (Outbound)
@@ -319,23 +327,38 @@ export async function recordMedicineMovement(params: {
     const stockRaw = await safeStorage.getItem(STORAGE_INVENTORY_KEY);
     let stockItems: any[] = stockRaw ? JSON.parse(stockRaw) : [...INITIAL_STOCK];
 
-    const existingIndex = stockItems.findIndex(
+    let existingIndex = stockItems.findIndex(
       (item) =>
-        item.name.toLowerCase() === cleanMedName.toLowerCase() &&
+        (item.name.toLowerCase() === cleanMedName.toLowerCase() ||
+          (sku && item.sku && item.sku.toLowerCase() === sku.toLowerCase()) ||
+          item.name.toLowerCase().includes(cleanMedName.toLowerCase()) ||
+          cleanMedName.toLowerCase().includes(item.name.toLowerCase())) &&
         item.batchNumber.toUpperCase() === cleanBatch
     );
+
+    // FIFO Fallback for OUTBOUND if exact batch does not match:
+    // Pick from the batch with available stock for this medicine
+    if (existingIndex === -1 && type === 'OUTBOUND') {
+      existingIndex = stockItems.findIndex(
+        (item) =>
+          ((sku && item.sku && item.sku.toLowerCase() === sku.toLowerCase()) ||
+            item.name.toLowerCase().includes(cleanMedName.toLowerCase()) ||
+            cleanMedName.toLowerCase().includes(item.name.toLowerCase())) &&
+          item.quantity > 0
+      );
+    }
 
     if (type === 'OUTBOUND') {
       if (existingIndex === -1) {
         return {
           success: false,
-          error: `Batch ${cleanBatch} of ${cleanMedName} not found in inventory stock to dispatch.`,
+          error: `Medicine "${cleanMedName}" not found in current inventory stock to dispatch.`,
         };
       }
       if (stockItems[existingIndex].quantity < quantity) {
         return {
           success: false,
-          error: `Insufficient stock! Available: ${stockItems[existingIndex].quantity}, Requested: ${quantity}`,
+          error: `Insufficient stock for ${cleanMedName}! Available: ${stockItems[existingIndex].quantity}, Requested: ${quantity}`,
         };
       }
       stockItems[existingIndex].quantity -= quantity;
