@@ -14,6 +14,7 @@ import StockCountAuditScreen from './src/screens/StockCountAuditScreen';
 import SupervisorExceptionScreen from './src/screens/SupervisorExceptionScreen';
 import MasterDataScreen from './src/screens/MasterDataScreen';
 import UserManagementScreen from './src/screens/UserManagementScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 import { InboundShipmentWithItems, flagShipmentDiscrepancy } from './src/services/receiving';
 import { OutboundOrder, dispatchOrderItem } from './src/services/dispatch';
 import { ExtractedLabelData } from './src/services/ocr';
@@ -46,6 +47,7 @@ export default function App() {
   const [isViewingSupervisorExceptions, setIsViewingSupervisorExceptions] = useState(false);
   const [isViewingMasterData, setIsViewingMasterData] = useState(false);
   const [isViewingUserManagement, setIsViewingUserManagement] = useState(false);
+  const [isViewingProfile, setIsViewingProfile] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -119,6 +121,7 @@ export default function App() {
     setIsViewingSupervisorExceptions(false);
     setIsViewingMasterData(false);
     setIsViewingUserManagement(false);
+    setIsViewingProfile(false);
   };
 
   const handleLogout = async () => {
@@ -137,6 +140,7 @@ export default function App() {
     setIsViewingSupervisorExceptions(false);
     setIsViewingMasterData(false);
     setIsViewingUserManagement(false);
+    setIsViewingProfile(false);
     setCurrentScreen('login');
   };
 
@@ -434,10 +438,18 @@ export default function App() {
             currentAdminId={currentUser?.id}
             onBack={() => setIsViewingUserManagement(false)}
           />
+        ) : isViewingProfile ? (
+          <ProfileScreen
+            user={currentUser}
+            onBack={() => setIsViewingProfile(false)}
+            onLogout={handleLogout}
+            onUserUpdated={(updated) => setCurrentUser(updated)}
+          />
         ) : (
           <DashboardScreen
             user={currentUser}
             onLogout={handleLogout}
+            onOpenProfile={() => setIsViewingProfile(true)}
             onSelectTask={(taskId) => setSelectedTaskType(taskId)}
             onOpenSupervisorExceptions={() => {
               if (currentUser?.role === 'SUPERVISOR' || currentUser?.role === 'SYSTEM_ADMIN') {

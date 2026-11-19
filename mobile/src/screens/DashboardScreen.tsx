@@ -24,6 +24,7 @@ export interface UserSession {
 interface DashboardScreenProps {
   user: UserSession;
   onLogout: () => void;
+  onOpenProfile?: () => void;
   onSelectTask?: (taskType: string) => void;
   onOpenOcrScanner?: () => void;
   onOpenSupervisorExceptions?: () => void;
@@ -47,6 +48,7 @@ const getRoleBadge = (role?: string) => {
 export default function DashboardScreen({
   user,
   onLogout,
+  onOpenProfile,
   onSelectTask,
   onOpenOcrScanner,
   onOpenSupervisorExceptions,
@@ -113,19 +115,26 @@ export default function DashboardScreen({
       >
         {/* Top App Bar */}
         <View style={styles.topBar}>
-          <View style={styles.userInfoContainer}>
+          <TouchableOpacity
+            style={styles.userInfoContainer}
+            onPress={onOpenProfile}
+            activeOpacity={0.7}
+          >
             <View style={styles.avatarCircle}>
               <Ionicons name="person" size={20} color="#38BDF8" />
             </View>
             <View>
-              <Text style={styles.greetingText}>Hello, {displayName}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={styles.greetingText}>Hello, {displayName}</Text>
+                <Ionicons name="chevron-forward" size={14} color="#64748B" style={{ marginLeft: 3 }} />
+              </View>
               <View style={[styles.roleBadge, { backgroundColor: roleBadge.bg }]}>
                 <Text style={[styles.roleBadgeText, { color: roleBadge.color }]}>
                   {roleBadge.label}
                 </Text>
               </View>
             </View>
-          </View>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.logoutButton} onPress={onLogout} activeOpacity={0.7}>
             <Ionicons name="log-out-outline" size={20} color="#F43F5E" />
