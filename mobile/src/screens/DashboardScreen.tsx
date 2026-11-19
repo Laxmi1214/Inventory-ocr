@@ -61,10 +61,10 @@ export default function DashboardScreen({
   const isOperatorOnly = !isSupervisorOrAdmin && !isInventoryAdmin && !isSystemAdmin;
 
   const [metrics, setMetrics] = useState<InventoryMetrics>({
-    totalInStock: 950,
-    totalIncome: 650,
-    totalGo: 20,
-    medicineCount: 3,
+    totalInStock: 250,
+    totalIncome: 250,
+    totalGo: 0,
+    medicineCount: 5,
   });
 
   const [pendingExceptionsCount, setPendingExceptionsCount] = useState<number>(0);
