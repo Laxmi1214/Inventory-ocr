@@ -207,9 +207,41 @@ export default function ScannerScreen({
       setShowResultModal(true);
     } catch (err: any) {
       console.warn('OCR capture error:', err);
+      const isConnectionError =
+        err?.message?.includes('ConnectException') ||
+        err?.message?.includes('fetch failed') ||
+        err?.message?.includes('Network request failed') ||
+        err?.message?.includes('Failed to connect');
+
       Alert.alert(
-        'OCR Service Notice',
-        err.message || 'Failed to process image with OCR microservice. Check backend connection.'
+        'OCR Microservice Notice',
+        isConnectionError
+          ? `Backend OCR server unreachable (${targetCode ? `Order ${targetCode}` : 'at 192.168.1.47:8080'}).\n\nMake sure 'node backend/bridge.js' is running on your PC.\n\nWould you like to auto-fill expected medicine details or enter manually?`
+          : (err.message || 'Failed to process image with OCR microservice.'),
+        [
+          {
+            text: 'Auto-fill Expected Item',
+            onPress: () => {
+              const expected = primaryItem;
+              setScanSource('OCR');
+              setProductName(expected?.name || 'Paracetamol 500mg Tablets');
+              setSku(expected?.sku || 'MED-PARA-500');
+              setBatchNumber(defaultExpectedBatch || 'BTH-PAR-26045');
+              setQuantity(defaultExpectedQty.toString());
+              setShowResultModal(true);
+            },
+          },
+          {
+            text: 'Enter Manually',
+            onPress: () => {
+              setShowManualModal(true);
+            },
+          },
+          {
+            text: 'Retry',
+            style: 'cancel',
+          },
+        ]
       );
     } finally {
       setIsOcrProcessing(false);

@@ -410,7 +410,7 @@ export async function recordMedicineMovement(params: {
  * In-memory zero-disk transmission for confidential pharma data
  */
 export async function sendBase64ToPaddleOcr(base64Image: string): Promise<OcrScanResult> {
-  const ocrBaseUrl = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+  const ocrBaseUrl = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
 
   let cleanB64 = base64Image;
   if (cleanB64.includes('base64,')) {
@@ -453,7 +453,7 @@ export async function sendBase64ToPaddleOcr(base64Image: string): Promise<OcrSca
  * Call Private PaddleOCR Microservice with image URI
  */
 export async function sendImageToPaddleOcr(imageUri: string): Promise<OcrScanResult> {
-  const ocrBaseUrl = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+  const ocrBaseUrl = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
 
   const formData = new FormData();
   const filename = imageUri.split('/').pop() || 'medicine.jpg';
