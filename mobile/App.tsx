@@ -12,6 +12,8 @@ import ValidationScreen from './src/screens/ValidationScreen';
 import StockCountListScreen from './src/screens/StockCountListScreen';
 import StockCountAuditScreen from './src/screens/StockCountAuditScreen';
 import SupervisorExceptionScreen from './src/screens/SupervisorExceptionScreen';
+import MasterDataScreen from './src/screens/MasterDataScreen';
+import UserManagementScreen from './src/screens/UserManagementScreen';
 import { InboundShipmentWithItems, flagShipmentDiscrepancy } from './src/services/receiving';
 import { OutboundOrder, dispatchOrderItem } from './src/services/dispatch';
 import { ExtractedLabelData } from './src/services/ocr';
@@ -42,6 +44,8 @@ export default function App() {
     order: OutboundOrder;
   } | null>(null);
   const [isViewingSupervisorExceptions, setIsViewingSupervisorExceptions] = useState(false);
+  const [isViewingMasterData, setIsViewingMasterData] = useState(false);
+  const [isViewingUserManagement, setIsViewingUserManagement] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
 
   // Check for existing active database session when app loads
@@ -112,6 +116,9 @@ export default function App() {
     setSelectedOrder(null);
     setPendingValidation(null);
     setPendingOrderValidation(null);
+    setIsViewingSupervisorExceptions(false);
+    setIsViewingMasterData(false);
+    setIsViewingUserManagement(false);
   };
 
   const handleLogout = async () => {
@@ -128,6 +135,8 @@ export default function App() {
     setPendingValidation(null);
     setPendingOrderValidation(null);
     setIsViewingSupervisorExceptions(false);
+    setIsViewingMasterData(false);
+    setIsViewingUserManagement(false);
     setCurrentScreen('login');
   };
 
@@ -415,6 +424,16 @@ export default function App() {
             userName={currentUser?.fullName || currentUser?.username || 'Supervisor'}
             onBack={() => setIsViewingSupervisorExceptions(false)}
           />
+        ) : isViewingMasterData ? (
+          <MasterDataScreen
+            userRole={currentUser?.role}
+            onBack={() => setIsViewingMasterData(false)}
+          />
+        ) : isViewingUserManagement ? (
+          <UserManagementScreen
+            currentAdminId={currentUser?.id}
+            onBack={() => setIsViewingUserManagement(false)}
+          />
         ) : (
           <DashboardScreen
             user={currentUser}
@@ -427,6 +446,26 @@ export default function App() {
                 Alert.alert(
                   'Access Denied (RBAC)',
                   'Only Supervisors and System Administrators have permission to review and approve discrepancy overrides.'
+                );
+              }
+            }}
+            onOpenMasterData={() => {
+              if (currentUser?.role === 'INVENTORY_ADMIN' || currentUser?.role === 'SYSTEM_ADMIN') {
+                setIsViewingMasterData(true);
+              } else {
+                Alert.alert(
+                  'Access Denied (RBAC)',
+                  'Only Inventory Administrators and System Administrators have permission to manage Master Data.'
+                );
+              }
+            }}
+            onOpenUserManagement={() => {
+              if (currentUser?.role === 'SYSTEM_ADMIN') {
+                setIsViewingUserManagement(true);
+              } else {
+                Alert.alert(
+                  'Access Denied (RBAC)',
+                  'Only System Administrators have permission to manage staff accounts and roles.'
                 );
               }
             }}

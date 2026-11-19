@@ -100,6 +100,30 @@ const INITIAL_SEED_USERS: UserRecord[] = [
     createdAt: new Date('2026-01-01').toISOString(),
     updatedAt: new Date('2026-01-01').toISOString(),
   },
+  {
+    id: 'USR-SEED-004',
+    username: 'Demo Inventory Admin',
+    email: 'inv_admin@congiotech.com',
+    password: 'password123',
+    role: 'INVENTORY_ADMIN',
+    createdAt: new Date('2026-01-01').toISOString(),
+    updatedAt: new Date('2026-01-01').toISOString(),
+  },
+  // Supervisors
+  { id: 'USR-SUP-001', username: 'Arun Kumar', email: 'arun.supervisor@congiotech.com', password: 'password123', role: 'SUPERVISOR', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-SUP-002', username: 'Meena Sundaram', email: 'meena.supervisor@congiotech.com', password: 'password123', role: 'SUPERVISOR', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-SUP-003', username: 'Karthik Raja', email: 'karthik.supervisor@congiotech.com', password: 'password123', role: 'SUPERVISOR', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-SUP-004', username: 'Divya Bharathi', email: 'divya.supervisor@congiotech.com', password: 'password123', role: 'SUPERVISOR', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  // Inventory Admins
+  { id: 'USR-INV-001', username: 'Suresh Babu', email: 'suresh.inv@congiotech.com', password: 'password123', role: 'INVENTORY_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-INV-002', username: 'Lakshmi Priya', email: 'lakshmi.inv@congiotech.com', password: 'password123', role: 'INVENTORY_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-INV-003', username: 'Venkatesh Raman', email: 'venkatesh.inv@congiotech.com', password: 'password123', role: 'INVENTORY_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-INV-004', username: 'Ananya Krishnan', email: 'ananya.inv@congiotech.com', password: 'password123', role: 'INVENTORY_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  // System Admins
+  { id: 'USR-SYS-001', username: 'Vijay Anand', email: 'vijay.sysadmin@congiotech.com', password: 'adminpassword', role: 'SYSTEM_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-SYS-002', username: 'Pooja Hegde', email: 'pooja.sysadmin@congiotech.com', password: 'adminpassword', role: 'SYSTEM_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-SYS-003', username: 'Manoj Kumar', email: 'manoj.sysadmin@congiotech.com', password: 'adminpassword', role: 'SYSTEM_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  { id: 'USR-SYS-004', username: 'Sneha Reddy', email: 'sneha.sysadmin@congiotech.com', password: 'adminpassword', role: 'SYSTEM_ADMIN', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
 ];
 
 /**

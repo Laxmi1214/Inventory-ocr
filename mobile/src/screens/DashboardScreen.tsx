@@ -27,6 +27,8 @@ interface DashboardScreenProps {
   onSelectTask?: (taskType: string) => void;
   onOpenOcrScanner?: () => void;
   onOpenSupervisorExceptions?: () => void;
+  onOpenMasterData?: () => void;
+  onOpenUserManagement?: () => void;
 }
 
 const getRoleBadge = (role?: string) => {
@@ -48,12 +50,15 @@ export default function DashboardScreen({
   onSelectTask,
   onOpenOcrScanner,
   onOpenSupervisorExceptions,
+  onOpenMasterData,
+  onOpenUserManagement,
 }: DashboardScreenProps) {
   const roleBadge = getRoleBadge(user.role);
   const displayName = user.fullName || user.username || user.email.split('@')[0] || 'Staff';
   const isSupervisorOrAdmin = user.role === 'SUPERVISOR' || user.role === 'SYSTEM_ADMIN';
   const isInventoryAdmin = user.role === 'INVENTORY_ADMIN' || user.role === 'SYSTEM_ADMIN';
-  const isOperatorOnly = !isSupervisorOrAdmin && !isInventoryAdmin;
+  const isSystemAdmin = user.role === 'SYSTEM_ADMIN';
+  const isOperatorOnly = !isSupervisorOrAdmin && !isInventoryAdmin && !isSystemAdmin;
 
   const [metrics, setMetrics] = useState<InventoryMetrics>({
     totalInStock: 950,
@@ -228,6 +233,74 @@ export default function DashboardScreen({
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={20} color="#8B5CF6" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* Inventory Admin Master Data Section (BRD 2.2 / FR-01) */}
+        {isInventoryAdmin && (
+          <View style={styles.masterDataSection}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>Master Data Administration</Text>
+              <View style={[styles.priorityPill, { backgroundColor: 'rgba(16, 185, 129, 0.15)' }]}>
+                <Text style={[styles.priorityPillText, { color: '#10B981' }]}>Admin Access</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.masterDataCard}
+              onPress={onOpenMasterData}
+              activeOpacity={0.8}
+            >
+              <View style={styles.masterDataIconBox}>
+                <Ionicons name="server" size={24} color="#10B981" />
+              </View>
+              <View style={styles.masterDataCardInfo}>
+                <View style={styles.supervisorTitleRow}>
+                  <Text style={styles.masterDataCardTitle}>Master Data Catalog</Text>
+                  <View style={[styles.rbacTag, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
+                    <Text style={[styles.rbacTagText, { color: '#6EE7B7' }]}>BRD 2.2</Text>
+                  </View>
+                </View>
+                <Text style={styles.supervisorCardDesc}>
+                  Maintain products catalog, register batches, and allocate warehouse rack locations.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#10B981" />
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* System Admin User Management Section (BRD 2.2 / FR-01) */}
+        {isSystemAdmin && (
+          <View style={styles.systemAdminSection}>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={styles.sectionTitle}>System Administration</Text>
+              <View style={[styles.priorityPill, { backgroundColor: 'rgba(245, 158, 11, 0.15)' }]}>
+                <Text style={[styles.priorityPillText, { color: '#F59E0B' }]}>System Admin</Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.systemAdminCard}
+              onPress={onOpenUserManagement}
+              activeOpacity={0.8}
+            >
+              <View style={styles.systemAdminIconBox}>
+                <Ionicons name="people" size={24} color="#F59E0B" />
+              </View>
+              <View style={styles.masterDataCardInfo}>
+                <View style={styles.supervisorTitleRow}>
+                  <Text style={styles.masterDataCardTitle}>Staff & Role Management</Text>
+                  <View style={[styles.rbacTag, { backgroundColor: 'rgba(245, 158, 11, 0.2)' }]}>
+                    <Text style={[styles.rbacTagText, { color: '#FCD34D' }]}>RBAC</Text>
+                  </View>
+                </View>
+                <Text style={styles.supervisorCardDesc}>
+                  Manage staff accounts, assign warehouse roles, and configure system access permissions.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#F59E0B" />
             </TouchableOpacity>
           </View>
         )}
@@ -643,6 +716,59 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontSize: 12,
     lineHeight: 17,
+  },
+  // Master Data Section
+  masterDataSection: {
+    marginBottom: 20,
+  },
+  masterDataCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#10B981',
+  },
+  masterDataIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  masterDataCardInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  masterDataCardTitle: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  // System Admin Section
+  systemAdminSection: {
+    marginBottom: 20,
+  },
+  systemAdminCard: {
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#F59E0B',
+  },
+  systemAdminIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
   },
   // Operator Floor Notice
   operatorNoticeBox: {
