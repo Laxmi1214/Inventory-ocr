@@ -33,6 +33,14 @@ export interface PendingPoDiscrepancy {
   createdAt: string;
   updatedAt?: string;
   receivedByName?: string;
+  itemId?: string;
+  productId?: string;
+  productName?: string;
+  sku?: string;
+  batchNumber?: string;
+  expectedQty?: number;
+  receivedQty?: number;
+  shortageQty?: number;
 }
 
 export interface DiscrepancySummary {

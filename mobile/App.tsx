@@ -208,30 +208,73 @@ export default function App() {
   const handleFlagDiscrepancy = async (
     reasons: string[],
     notes?: string,
-    shipment?: InboundShipmentWithItems
+    shipment?: InboundShipmentWithItems,
+    extra?: {
+      receivedQty?: number;
+      expectedQty?: number;
+      productName?: string;
+      sku?: string;
+      batchNumber?: string;
+      expiryDate?: string;
+    }
   ) => {
     const poNum = shipment?.poNumber || 'Unknown PO';
+    const isShortage =
+      extra?.expectedQty &&
+      extra?.receivedQty !== undefined &&
+      extra.receivedQty < extra.expectedQty;
+
     try {
       await flagShipmentDiscrepancy({
         poNumber: poNum,
         itemId: shipment?.items[0]?.id,
+        productId: shipment?.items[0]?.productId,
+        productName: extra?.productName || shipment?.items[0]?.product?.name,
+        sku: extra?.sku || shipment?.items[0]?.product?.sku,
+        batchNumber: extra?.batchNumber || shipment?.items[0]?.expectedBatch,
+        expiryDate: extra?.expiryDate,
+        expectedQty: extra?.expectedQty || shipment?.items[0]?.expectedQty,
+        receivedQty: extra?.receivedQty,
         reasons,
         notes,
+        userId: currentUser?.id,
       });
 
-      Alert.alert(
-        'Discrepancy Quarantined',
-        `Purchase Order ${poNum} has been flagged with DISCREPANCY status.\n\nFailures:\n• ${reasons.join('\n• ')}\n\nPhysical goods routed to Quarantine Holding Bay. Stock was NOT added to active inventory.`,
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              setPendingValidation(null);
-              setSelectedShipment(null);
+      if (isShortage) {
+        Alert.alert(
+          'Shortage Routed to Supervisor',
+          `Purchase Order ${poNum} flagged for quantity shortage:\n\n` +
+            `• Expected (PO): ${extra?.expectedQty} units\n` +
+            `• Physical Received: ${extra?.receivedQty} units\n` +
+            `• Shortage: -${(extra?.expectedQty || 0) - (extra?.receivedQty || 0)} units\n\n` +
+            `Goods placed on Quarantine Hold in BAY-01.\n` +
+            `Stock was NOT added to active inventory.\n` +
+            `Awaiting Supervisor deviation approval in Exception Inbox.`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                setPendingValidation(null);
+                setSelectedShipment(null);
+              },
             },
-          },
-        ]
-      );
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Discrepancy Quarantined',
+          `Purchase Order ${poNum} has been flagged with DISCREPANCY status.\n\nFailures:\n• ${reasons.join('\n• ')}\n\nPhysical goods routed to Quarantine Holding Bay. Stock was NOT added to active inventory.`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                setPendingValidation(null);
+                setSelectedShipment(null);
+              },
+            },
+          ]
+        );
+      }
     } catch (err: any) {
       Alert.alert('Notice', 'Discrepancy logged. Goods quarantined.');
       setPendingValidation(null);
@@ -340,8 +383,8 @@ export default function App() {
               onConfirmAddToInventory={async (validatedData, shipment) => {
                 await handleSaveValidatedInventory(validatedData, shipment);
               }}
-              onFlagDiscrepancy={async (reasons, notes) => {
-                await handleFlagDiscrepancy(reasons, notes, pendingValidation.shipment);
+              onFlagDiscrepancy={async (reasons, notes, extra) => {
+                await handleFlagDiscrepancy(reasons, notes, pendingValidation.shipment, extra);
               }}
             />
           ) : selectedShipment ? (

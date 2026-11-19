@@ -167,7 +167,7 @@ const FALLBACK_SHIPMENTS: InboundShipmentWithItems[] = [
   },
 ];
 
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
 
 /**
  * Flag a PO or Item as DISCREPANCY in PostgreSQL Database
@@ -175,8 +175,17 @@ const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.
 export async function flagShipmentDiscrepancy(params: {
   poNumber: string;
   itemId?: string;
+  productId?: string;
+  productName?: string;
+  sku?: string;
+  batchNumber?: string;
+  expiryDate?: string;
+  expectedQty?: number;
+  receivedQty?: number;
   reasons: string[];
   notes?: string;
+  userId?: string;
+  locationCode?: string;
 }): Promise<{ success: boolean; error?: string }> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 6000);
