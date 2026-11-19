@@ -1380,7 +1380,216 @@ const server = http.createServer(async (req, res) => {
       return res.end(JSON.stringify({ success: false, error: roleErr.message }));
     }
   }
+ // -------------------------------------------------------------
+  // Route 6.7: Master Data - Get Complete Catalog (Products, Batches, Inventory Locations)
+  // -------------------------------------------------------------
+  if (req.method === 'GET' && urlPath === '/api/v1/master-data/summary') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
 
+      // 1. All products
+      const products = await sql`
+        SELECT 
+          id,
+          sku,
+          name,
+          barcode,
+          pack_size AS "packSize",
+          unit,
+          is_active AS "isActive",
+          created_at AS "createdAt"
+        FROM public.products
+        ORDER BY name ASC
+      `;
+
+      // 2. All batches with product info
+      const batches = await sql`
+        SELECT 
+          b.id,
+          b.product_id AS "productId",
+          b.batch_number AS "batchNumber",
+          b.mfg_date AS "mfgDate",
+          b.expiry_date AS "expiryDate",
+          b.status,
+          p.name AS "productName",
+          p.sku AS "productSku"
+        FROM public.batches b
+        JOIN public.products p ON p.id = b.product_id
+        ORDER BY b.expiry_date ASC
+      `;
+
+      // 3. Current active inventory per bay
+      const inventory = await sql`
+        SELECT 
+          i.id,
+          i.location_code AS "locationCode",
+          i.quantity,
+          i.updated_at AS "updatedAt",
+          p.id AS "productId",
+          p.name AS "productName",
+          p.sku,
+          p.unit,
+          b.id AS "batchId",
+          b.batch_number AS "batchNumber",
+          b.expiry_date AS "expiryDate"
+        FROM public.inventory i
+        JOIN public.products p ON p.id = i.product_id
+        LEFT JOIN public.batches b ON b.id = i.batch_id
+        ORDER BY i.location_code ASC, p.name ASC
+      `;
+
+      // 4. Unique locations summary
+      const locations = await sql`
+        SELECT 
+          location_code AS "locationCode",
+          COALESCE(SUM(quantity), 0) AS "totalQty",
+          COUNT(DISTINCT product_id) AS "productCount",
+          COUNT(DISTINCT batch_id) AS "batchCount"
+        FROM public.inventory
+        GROUP BY location_code
+        ORDER BY location_code ASC
+      `;
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        counts: {
+          products: products.length,
+          batches: batches.length,
+          inventoryRows: inventory.length,
+          locations: locations.length,
+        },
+        products,
+        batches,
+        inventory,
+        locations
+      }));
+    } catch (mdErr) {
+      console.error('[MASTER DATA SUMMARY ERROR]:', mdErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: mdErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.8: Master Data - Create New Product
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/master-data/products') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const { sku, name, barcode, packSize, unit = 'BOX' } = body;
+
+      if (!sku || !sku.trim() || !name || !name.trim()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Product SKU and Name are required' }));
+      }
+
+      // Check for duplicate SKU
+      const existing = await sql`SELECT id FROM public.products WHERE LOWER(sku) = ${sku.trim().toLowerCase()} LIMIT 1`;
+      if (existing.length > 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: `Product with SKU "${sku}" already exists` }));
+      }
+
+      const inserted = await sql`
+        INSERT INTO public.products (sku, name, barcode, pack_size, unit, is_active)
+        VALUES (${sku.trim().toUpperCase()}, ${name.trim()}, ${barcode ? barcode.trim() : null}, ${packSize || 'Standard Pack'}, ${unit.trim().toUpperCase()}, true)
+        RETURNING id, sku, name, barcode, pack_size AS "packSize", unit, is_active AS "isActive", created_at AS "createdAt"
+      `;
+
+      console.log(`[MASTER DATA] Created Product: ${inserted[0].name} (${inserted[0].sku})`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, product: inserted[0] }));
+    } catch (prodErr) {
+      console.error('[MASTER DATA CREATE PRODUCT ERROR]:', prodErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: prodErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.9: Master Data - Create New Batch
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/master-data/batches') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const { productId, batchNumber, mfgDate, expiryDate, status = 'ACTIVE' } = body;
+
+      if (!productId || !batchNumber || !batchNumber.trim() || !expiryDate) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'productId, batchNumber and expiryDate are required' }));
+      }
+
+      const inserted = await sql`
+        INSERT INTO public.batches (product_id, batch_number, mfg_date, expiry_date, status)
+        VALUES (
+          ${productId},
+          ${batchNumber.trim().toUpperCase()},
+          ${mfgDate ? new Date(mfgDate) : new Date()},
+          ${new Date(expiryDate)},
+          ${status.trim().toUpperCase()}
+        )
+        RETURNING id, product_id AS "productId", batch_number AS "batchNumber", mfg_date AS "mfgDate", expiry_date AS "expiryDate", status
+      `;
+
+      console.log(`[MASTER DATA] Created Batch: ${inserted[0].batchNumber} for Product ${productId}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, batch: inserted[0] }));
+    } catch (batchErr) {
+      console.error('[MASTER DATA CREATE BATCH ERROR]:', batchErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: batchErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 6.10: Master Data - Allocate Rack Location / Initial Balance
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/master-data/locations') {
+    try {
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      const body = await parseJsonBody(req);
+      const { locationCode, productId, batchId, quantity = 0 } = body;
+
+      if (!locationCode || !locationCode.trim() || !productId) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'locationCode and productId are required' }));
+      }
+
+      const numQty = parseInt(quantity, 10) || 0;
+
+      const inserted = await sql`
+        INSERT INTO public.inventory (location_code, product_id, batch_id, quantity)
+        VALUES (${locationCode.trim().toUpperCase()}, ${productId}, ${batchId || null}, ${numQty})
+        RETURNING id, location_code AS "locationCode", product_id AS "productId", batch_id AS "batchId", quantity
+      `;
+
+      console.log(`[MASTER DATA] Assigned Rack Location: ${inserted[0].locationCode} with Qty ${numQty}`);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, inventory: inserted[0] }));
+    } catch (locErr) {
+      console.error('[MASTER DATA ALLOCATE LOCATION ERROR]:', locErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: locErr.message }));
+    }
+  }
   // -------------------------------------------------------------
   // Route 7: Forward All Other Requests to Python FastAPI (OCR)
   // -------------------------------------------------------------
