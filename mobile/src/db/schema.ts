@@ -35,10 +35,11 @@ export const users = pgTable('users', {
  */
 export const products = pgTable('products', {
   id: uuid('id').defaultRandom().primaryKey(),
-  sku: varchar('sku', { length: 100 }).notNull().unique(), // e.g. 'MED-PARA-500'
-  name: varchar('name', { length: 255 }).notNull(), // e.g. 'Paracetamol 500mg Tablets'
+  sku: varchar('sku', { length: 100 }).notNull().unique(), // e.g. 'MED-CALP-650'
+  productId: varchar('product_id', { length: 100 }), // Barcode / QR / DataMatrix number, e.g. '62000000089737'
+  name: varchar('name', { length: 255 }).notNull(), // e.g. 'Calpol 650 Tablets'
   barcode: varchar('barcode', { length: 100 }), // Barcode / GTIN code
-  packSize: varchar('pack_size', { length: 100 }), // e.g. 'Box of 100 Tablets'
+  packSize: varchar('pack_size', { length: 100 }), // e.g. 'Strip of 15 Tablets'
   unit: varchar('unit', { length: 50 }).notNull().default('BOX'), // e.g. 'BOX', 'STRIP', 'BOTTLE'
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

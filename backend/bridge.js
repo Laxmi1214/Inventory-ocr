@@ -65,7 +65,7 @@ function startPythonOcrService() {
 // Start Python OCR microservice
 startPythonOcrService();
 
-// In-Memory Master Store for Outbound Customer Orders (Pick & Pack)
+// In-Memory Master Store for Outbound Customer Orders (5 Real Medicines)
 let outboundOrdersStore = [
   {
     id: 'ord-001',
@@ -74,16 +74,16 @@ let outboundOrdersStore = [
     status: 'PENDING',
     priority: 'URGENT',
     deliveryDate: new Date(Date.now() + 86400000).toISOString(),
-    notes: 'Urgent ICU replenishment. Verify tamper seal and expiry.',
+    notes: 'Urgent ICU replenishment. Verify tamper seal and expiry date (10/2028).',
     items: [
       {
         id: 'ord-item-001',
-        productName: 'Paracetamol 500mg Tablets',
-        sku: 'MED-PARA-500',
+        productName: 'Calpol 650 Tablets',
+        sku: 'MED-CALP-650',
         requiredQty: 20,
         pickedQty: 0,
         status: 'PENDING',
-        suggestedBatch: 'BTH-PAR-26045',
+        suggestedBatch: 'BTH-CALP-2601',
       }
     ]
   },
@@ -94,16 +94,16 @@ let outboundOrdersStore = [
     status: 'PENDING',
     priority: 'COLD_CHAIN',
     deliveryDate: new Date(Date.now() + 172800000).toISOString(),
-    notes: 'Pediatric suspension order. Maintain ambient temp below 25°C.',
+    notes: 'Antibiotic order. Box of 10 Tablets. Verify Abbott QR code authenticity.',
     items: [
       {
         id: 'ord-item-002',
-        productName: 'Amoxicillin 250mg Suspension',
-        sku: 'MED-AMOX-250',
+        productName: 'Claribid 500 Tablets',
+        sku: 'MED-CLAR-500',
         requiredQty: 15,
         pickedQty: 0,
         status: 'PENDING',
-        suggestedBatch: 'AMX-9082',
+        suggestedBatch: 'BTH-CLAR-4091',
       }
     ]
   },
@@ -114,16 +114,16 @@ let outboundOrdersStore = [
     status: 'PENDING',
     priority: 'NORMAL',
     deliveryDate: new Date(Date.now() + 259200000).toISOString(),
-    notes: 'Inpatient fever management stock replenishment.',
+    notes: '3 Cartons x 6 Tablets. Verify 2D DataMatrix (GTIN: 00368094900188).',
     items: [
       {
         id: 'ord-item-003',
-        productName: 'Dolo 650 Paracetamol Tablets',
-        sku: 'MED-DOLO-650',
-        requiredQty: 50,
+        productName: 'Azithromycin Tablets USP 250mg',
+        sku: 'MED-AZIT-250',
+        requiredQty: 25,
         pickedQty: 0,
         status: 'PENDING',
-        suggestedBatch: 'BTH-DOLO-8821',
+        suggestedBatch: '4242407041',
       }
     ]
   },
@@ -134,16 +134,16 @@ let outboundOrdersStore = [
     status: 'PENDING',
     priority: 'URGENT',
     deliveryDate: new Date(Date.now() + 345600000).toISOString(),
-    notes: 'Antidiarrheal emergency ward replenishment.',
+    notes: 'Cardiology emergency replenishment. Amlodipine 5mg. Batch BTH-AMLO-5510.',
     items: [
       {
         id: 'ord-item-004',
-        productName: 'Loperamide 2mg Capsules',
-        sku: 'MED-LOPE-002',
+        productName: 'Amlokind 5 Tablets',
+        sku: 'MED-AMLO-005',
         requiredQty: 30,
         pickedQty: 0,
         status: 'PENDING',
-        suggestedBatch: 'BTH-LOP-9901',
+        suggestedBatch: 'BTH-AMLO-5510',
       }
     ]
   },
@@ -154,16 +154,16 @@ let outboundOrdersStore = [
     status: 'PENDING',
     priority: 'NORMAL',
     deliveryDate: new Date(Date.now() + 432000000).toISOString(),
-    notes: 'Emergency unit bulk order.',
+    notes: 'Bottle of 60 Tablets. NDC: 16110-502-01. Barcode: 316110502014.',
     items: [
       {
         id: 'ord-item-005',
-        productName: 'Dolo 650 Paracetamol Tablets',
-        sku: 'MED-DOLO-650',
-        requiredQty: 25,
+        productName: 'Acticlate 150mg Tablets',
+        sku: 'MED-ACTI-150',
+        requiredQty: 20,
         pickedQty: 0,
         status: 'PENDING',
-        suggestedBatch: 'BTH-DOLO-8821',
+        suggestedBatch: 'BTH-ACTI-7812',
       }
     ]
   },
@@ -174,16 +174,16 @@ let outboundOrdersStore = [
     status: 'PENDING',
     priority: 'URGENT',
     deliveryDate: new Date(Date.now() + 518400000).toISOString(),
-    notes: 'Inpatient general ward batch delivery.',
+    notes: 'Fever management ward batch dispatch. Calpol 650 15-tablet strips.',
     items: [
       {
         id: 'ord-item-006',
-        productName: 'Paracetamol 500mg Tablets',
-        sku: 'MED-PARA-500',
-        requiredQty: 40,
+        productName: 'Calpol 650 Tablets',
+        sku: 'MED-CALP-650',
+        requiredQty: 10,
         pickedQty: 0,
         status: 'PENDING',
-        suggestedBatch: 'BATCH123',
+        suggestedBatch: 'BTH-CALP-2601',
       }
     ]
   }
@@ -512,7 +512,13 @@ const server = http.createServer(async (req, res) => {
       let productRows = await sql`
         SELECT id, sku, name, barcode, pack_size, unit
         FROM public.products
-        WHERE LOWER(sku) = ${cleanSku.toLowerCase()} OR LOWER(name) = ${cleanProdName.toLowerCase()}
+        WHERE LOWER(sku) = ${cleanSku.toLowerCase()}
+           OR LOWER(name) = ${cleanProdName.toLowerCase()}
+           OR product_id = ${cleanSku}
+           OR barcode = ${cleanSku}
+           OR barcode = ${cleanProdName}
+           OR product_id = ${cleanProdName}
+           OR LOWER(name) LIKE ${'%' + cleanProdName.toLowerCase() + '%'}
         LIMIT 1
       `;
       let product = productRows[0];
@@ -743,7 +749,13 @@ const server = http.createServer(async (req, res) => {
       // 1. Find Product
       let prodRows = await sql`
         SELECT id, sku, name FROM public.products
-        WHERE LOWER(sku) = ${cleanSku.toLowerCase()} OR LOWER(name) = ${cleanProdName.toLowerCase()}
+        WHERE LOWER(sku) = ${cleanSku.toLowerCase()}
+           OR LOWER(name) = ${cleanProdName.toLowerCase()}
+           OR product_id = ${cleanSku}
+           OR barcode = ${cleanSku}
+           OR barcode = ${cleanProdName}
+           OR product_id = ${cleanProdName}
+           OR LOWER(name) LIKE ${'%' + cleanProdName.toLowerCase() + '%'}
         LIMIT 1
       `;
       if (prodRows.length === 0) {

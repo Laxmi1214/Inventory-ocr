@@ -30,43 +30,43 @@ interface TaskDetailScreenProps {
   onStartScan: (task: TaskInfo) => void;
 }
 
-// Sample task data tailored to Congiotech Pharmaceutical inventory BRD
+// Sample task data tailored to the 5 Real Master Medicines
 const TASK_DATA: Record<string, TaskInfo> = {
   RECEIVING: {
     type: 'RECEIVING',
     title: 'Goods Reception (Inbound)',
     code: 'PO-2026-0891',
-    partnerOrDestination: 'Novartis Healthcare Pvt Ltd',
-    expectedItem: 'Paracetamol 500mg Tablets (Box of 100)',
-    expectedSku: 'MED-PARA-500',
-    expectedQty: 100,
-    expectedBatch: 'BATCH123',
+    partnerOrDestination: 'GlaxoSmithKline Pharmaceuticals Ltd (GSK)',
+    expectedItem: 'Calpol 650 Tablets (Strip of 15)',
+    expectedSku: 'MED-CALP-650',
+    expectedQty: 50,
+    expectedBatch: 'BTH-CALP-2601',
     location: 'Dock Bay 3 / Receiving Quarantine',
-    notes: 'Verify tamper-evident seal, decode GS1 DataMatrix & check expiry date (min 18 months).',
+    notes: 'Verify tamper-evident seal, decode 2D DataMatrix (62000000089737) & check expiry (10/2028).',
   },
   PICK_PACK: {
     type: 'PICK_PACK',
     title: 'Pick & Pack (Outbound)',
     code: 'ORD-2026-4412',
     partnerOrDestination: 'Apollo Hospitals - Central Pharmacy',
-    expectedItem: 'Paracetamol 500mg Tablets',
-    expectedSku: 'MED-PARA-500',
+    expectedItem: 'Calpol 650 Tablets',
+    expectedSku: 'MED-CALP-650',
     expectedQty: 20,
-    expectedBatch: 'BTH-PAR-26045',
+    expectedBatch: 'BTH-CALP-2601',
     location: 'Zone B / Shelf 04 / Bin 12',
-    notes: 'Strict FIFO lot picking. Verify batch number matches authorized order pick list.',
+    notes: 'Strict FIFO lot picking. Fulfill Apollo hospital prescription order.',
   },
   STOCK_COUNT: {
     type: 'STOCK_COUNT',
     title: 'Stock Counting (Audit)',
     code: 'CNT-2026-0108',
     partnerOrDestination: 'Annual GMP Compliance Audit',
-    expectedItem: 'Insulin Glargine 100 IU/ml',
-    expectedSku: 'MED-INSU-100',
-    expectedQty: 300,
-    expectedBatch: 'INS-7721',
-    location: 'Cold Storage Room 2 (2°C - 8°C)',
-    notes: 'Record physical unit count. System will calculate variance against recorded inventory.',
+    expectedItem: 'Claribid 500 Tablets (Box of 10)',
+    expectedSku: 'MED-CLAR-500',
+    expectedQty: 50,
+    expectedBatch: 'BTH-CLAR-4091',
+    location: 'Zone A / Shelf 02 / Bin 05',
+    notes: 'Record physical unit count. System will calculate variance against recorded inventory (50 units baseline).',
   },
 };
 

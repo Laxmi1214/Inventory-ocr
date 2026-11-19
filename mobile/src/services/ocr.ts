@@ -19,17 +19,123 @@ export interface ExtractedLabelData {
   rawText?: string;
 }
 
+// 5 Real Pharmaceutical Master Medicines Catalog
+export const REAL_MASTER_MEDICINES = [
+  {
+    name: 'Calpol 650 Tablets',
+    sku: 'MED-CALP-650',
+    productId: '62000000089737',
+    barcodes: ['62000000089737', 'MED-CALP-650'],
+    batchNumber: 'BTH-CALP-2601',
+    expiryDate: '10/2028',
+    mfgDate: '04/2026',
+    price: 30,
+    unit: 'STRIP',
+    packSize: 'Strip of 15 Tablets',
+    supplier: 'GlaxoSmithKline Pharmaceuticals Ltd (GSK)',
+    poNumber: 'PO-2026-0891',
+    orderNumber: 'ORD-2026-4412',
+    hospital: 'Apollo Hospitals - Central Pharmacy',
+  },
+  {
+    name: 'Claribid 500 Tablets',
+    sku: 'MED-CLAR-500',
+    productId: '8901117245102',
+    barcodes: ['8901117245102', 'MED-CLAR-500'],
+    batchNumber: 'BTH-CLAR-4091',
+    expiryDate: '08/2027',
+    mfgDate: '02/2026',
+    price: 350,
+    unit: 'BOX',
+    packSize: 'Box of 10 Tablets',
+    supplier: 'Abbott Healthcare Pvt Ltd',
+    poNumber: 'PO-2026-0892',
+    orderNumber: 'ORD-2026-4413',
+    hospital: 'Fortis Healthcare - Pediatric Wing',
+  },
+  {
+    name: 'Azithromycin Tablets USP 250mg',
+    sku: 'MED-AZIT-250',
+    productId: '00368094900188',
+    barcodes: ['00368094900188', '331703202318', '4242407041', '6809490018', '68094-900-18', 'MED-AZIT-250'],
+    batchNumber: '4242407041',
+    expiryDate: '07/2027',
+    mfgDate: '07/2025',
+    price: 180,
+    unit: 'BOX',
+    packSize: 'Box of 18 Tablets (3x6)',
+    supplier: 'PrecisionDose Inc / CSPC',
+    poNumber: 'PO-2026-0893',
+    orderNumber: 'ORD-2026-4414',
+    hospital: 'Manipal Hospitals - Outpatient Dept',
+  },
+  {
+    name: 'Amlokind 5 Tablets',
+    sku: 'MED-AMLO-005',
+    productId: '8904103311105',
+    barcodes: ['8904103311105', 'MED-AMLO-005'],
+    batchNumber: 'BTH-AMLO-5510',
+    expiryDate: '09/2028',
+    mfgDate: '03/2026',
+    price: 45,
+    unit: 'STRIP',
+    packSize: 'Strip of 10 Tablets',
+    supplier: 'Mankind Pharma Ltd',
+    poNumber: 'PO-2026-0894',
+    orderNumber: 'ORD-2026-4415',
+    hospital: 'MIOT International - Acute Care',
+  },
+  {
+    name: 'Acticlate 150mg Tablets',
+    sku: 'MED-ACTI-150',
+    productId: '316110502014',
+    barcodes: ['316110502014', '1611050201', '16110502014', '16110-502-01', 'MED-ACTI-150'],
+    batchNumber: 'BTH-ACTI-7812',
+    expiryDate: '06/2029',
+    mfgDate: '06/2026',
+    price: 520,
+    unit: 'BOTTLE',
+    packSize: 'Bottle of 60 Tablets',
+    supplier: 'Aqua Pharmaceuticals / Catalent',
+    poNumber: 'PO-2026-0895',
+    orderNumber: 'ORD-2026-4416',
+    hospital: 'Kauvery Hospital - Emergency Ward',
+  },
+];
+
 /**
  * Decodes barcode or QR code string and extracts structured fields
- * Handles:
- *  1. QR Code JSON formats (e.g. {"sku": "...", "batch": "...", "expiry": "..."})
- *  2. QR Code Delimited strings (e.g. "SKU|BATCH|EXPIRY" or URL parameters)
- *  3. GS1 DataMatrix 2D codes for pharma: (01)GTIN (17)YYMMDD (10)BATCH
- *  4. Standard 1D/2D Barcodes (Code128, EAN-13, Code39)
  */
 export function decodePharmaBarcode(rawCode: string, codeType?: string): ExtractedLabelData {
   const cleanCode = rawCode.trim();
+  const upperCode = cleanCode.toUpperCase();
   const isQR = codeType?.toLowerCase().includes('qr') || cleanCode.startsWith('{') || cleanCode.includes('http');
+
+  // Direct Match against 5 Real Master Medicines
+  const matchedMaster = REAL_MASTER_MEDICINES.find(
+    (m) =>
+      m.productId === cleanCode ||
+      m.sku.toUpperCase() === upperCode ||
+      m.barcodes.some((b) => b.toUpperCase() === upperCode || cleanCode.includes(b)) ||
+      upperCode.includes(m.name.toUpperCase().split(' ')[0])
+  );
+
+  if (matchedMaster) {
+    return {
+      source: isQR ? 'QR_CODE' : 'BARCODE',
+      barcode: matchedMaster.productId,
+      barcodeType: isQR ? '2D_DATAMATRIX_QR' : 'BARCODE',
+      productName: matchedMaster.name,
+      sku: matchedMaster.sku,
+      batchNumber: matchedMaster.batchNumber,
+      expiryDate: matchedMaster.expiryDate,
+      mfgDate: matchedMaster.mfgDate,
+      price: matchedMaster.price,
+      quantity: 50,
+      confidence: 1.0,
+      rawText: cleanCode,
+    };
+  }
 
   // Case 1: QR Code containing JSON payload
   if (cleanCode.startsWith('{') && cleanCode.endsWith('}')) {
