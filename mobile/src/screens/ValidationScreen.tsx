@@ -32,7 +32,18 @@ interface ValidationScreenProps {
     validatedData: ExtractedLabelData,
     order: OutboundOrder
   ) => Promise<void>;
-  onFlagDiscrepancy: (reasons: string[], notes?: string) => Promise<void>;
+  onFlagDiscrepancy: (
+    reasons: string[],
+    notes?: string,
+    extra?: {
+      receivedQty?: number;
+      expectedQty?: number;
+      productName?: string;
+      sku?: string;
+      batchNumber?: string;
+      expiryDate?: string;
+    }
+  ) => Promise<void>;
 }
 
 export default function ValidationScreen({
@@ -241,19 +252,27 @@ export default function ValidationScreen({
     const expectedQty = expectedItem ? expectedItem.expectedQty - (expectedItem.receivedQty || 0) : 10;
     const isQtyValid = !isNaN(parsedQty) && parsedQty > 0;
     let qtyMatchStatus: 'EXACT' | 'PARTIAL' | 'OVER' = 'EXACT';
+    let isShortage = false;
 
     if (parsedQty < expectedQty) {
       qtyMatchStatus = 'PARTIAL';
+      isShortage = true;
+      if (!isPickMode) {
+        reasons.push(
+          `Quantity Shortage: Expected ${expectedQty} units on PO, but only ${parsedQty} units physically received (-${expectedQty - parsedQty} units shortage). Supervisor deviation approval required.`
+        );
+      }
     } else if (parsedQty > expectedQty) {
       qtyMatchStatus = 'OVER';
       reasons.push(`Over-delivery: Received ${parsedQty} exceeds expected ${expectedQty}`);
     }
 
-    // Overall Match Status (All critical pharma checks must pass)
-    const isOverallPass = isProductMatch && isBatchMatch && !isExpired && isQtyValid;
+    // Overall Match Status (All critical pharma checks must pass; for inbound receiving, shortage locks direct intake)
+    const isOverallPass = isProductMatch && isBatchMatch && !isExpired && isQtyValid && (!isShortage || isPickMode);
 
     return {
       isOverallPass,
+      isShortage,
       isProductMatch,
       isBatchMatch,
       isExpiryValid,
@@ -268,7 +287,7 @@ export default function ValidationScreen({
       parsedQty: isQtyValid ? parsedQty : 0,
       reasons,
     };
-  }, [expectedItem, editProductName, editSku, editBatch, editExpiry, editQuantity]);
+  }, [expectedItem, editProductName, editSku, editBatch, editExpiry, editQuantity, isPickMode]);
 
   // -------------------------------------------------------------
   // Handlers
@@ -320,7 +339,18 @@ export default function ValidationScreen({
     setShowDiscrepancyModal(false);
     setIsSubmitting(true);
     try {
-      await onFlagDiscrepancy(validationResults.reasons, discrepancyNote.trim());
+      await onFlagDiscrepancy(
+        validationResults.reasons,
+        discrepancyNote.trim(),
+        {
+          receivedQty: validationResults.parsedQty,
+          expectedQty: validationResults.expectedQty,
+          productName: editProductName.trim(),
+          sku: editSku.trim() || expectedItem?.product?.sku,
+          batchNumber: editBatch.trim().toUpperCase(),
+          expiryDate: editExpiry.trim(),
+        }
+      );
     } catch (err: any) {
       Alert.alert('Discrepancy Error', err?.message || 'Failed to flag discrepancy.');
     } finally {
@@ -388,7 +418,11 @@ export default function ValidationScreen({
         <View
           style={[
             styles.statusBanner,
-            validationResults.isOverallPass ? styles.statusBannerSuccess : styles.statusBannerError,
+            validationResults.isOverallPass
+              ? styles.statusBannerSuccess
+              : validationResults.isShortage && !isPickMode
+              ? { backgroundColor: 'rgba(245, 158, 11, 0.1)', borderColor: '#F59E0B' }
+              : styles.statusBannerError,
           ]}
         >
           <View
@@ -397,30 +431,54 @@ export default function ValidationScreen({
               {
                 backgroundColor: validationResults.isOverallPass
                   ? 'rgba(16, 185, 129, 0.2)'
+                  : validationResults.isShortage && !isPickMode
+                  ? 'rgba(245, 158, 11, 0.2)'
                   : 'rgba(239, 68, 68, 0.2)',
               },
             ]}
           >
             <Ionicons
-              name={validationResults.isOverallPass ? 'checkmark-circle' : 'alert-circle'}
+              name={
+                validationResults.isOverallPass
+                  ? 'checkmark-circle'
+                  : validationResults.isShortage && !isPickMode
+                  ? 'alert-circle'
+                  : 'alert-circle'
+              }
               size={32}
-              color={validationResults.isOverallPass ? '#10B981' : '#EF4444'}
+              color={
+                validationResults.isOverallPass
+                  ? '#10B981'
+                  : validationResults.isShortage && !isPickMode
+                  ? '#F59E0B'
+                  : '#EF4444'
+              }
             />
           </View>
           <View style={styles.statusTextContainer}>
             <Text
               style={[
                 styles.statusTitle,
-                { color: validationResults.isOverallPass ? '#10B981' : '#EF4444' },
+                {
+                  color: validationResults.isOverallPass
+                    ? '#10B981'
+                    : validationResults.isShortage && !isPickMode
+                    ? '#F59E0B'
+                    : '#EF4444',
+                },
               ]}
             >
               {validationResults.isOverallPass
                 ? 'PO Verification PASSED'
+                : validationResults.isShortage && !isPickMode
+                ? 'Quantity Shortage DETECTED'
                 : 'Discrepancy DETECTED'}
             </Text>
             <Text style={styles.statusDescription}>
               {validationResults.isOverallPass
                 ? 'All medicine details match the authorized Purchase Order. Ready to add to inventory table.'
+                : validationResults.isShortage && !isPickMode
+                ? `PO requested ${validationResults.expectedQty} units, but physical count is ${validationResults.parsedQty} units (-${validationResults.expectedQty - validationResults.parsedQty} units). Direct inventory intake is locked. Route to Supervisor for deviation review.`
                 : 'Physical medicine does NOT match Purchase Order records. Direct inventory addition is locked.'}
             </Text>
           </View>
@@ -622,6 +680,8 @@ export default function ValidationScreen({
                 styles.matchBadge,
                 validationResults.qtyMatchStatus === 'EXACT'
                   ? styles.matchBadgePass
+                  : validationResults.isShortage && !isPickMode
+                  ? { backgroundColor: 'rgba(245, 158, 11, 0.15)', borderColor: '#F59E0B' }
                   : validationResults.qtyMatchStatus === 'PARTIAL'
                   ? styles.matchBadgeWarning
                   : styles.matchBadgeFail,
@@ -634,6 +694,8 @@ export default function ValidationScreen({
                     color:
                       validationResults.qtyMatchStatus === 'EXACT'
                         ? '#10B981'
+                        : validationResults.isShortage && !isPickMode
+                        ? '#F59E0B'
                         : validationResults.qtyMatchStatus === 'PARTIAL'
                         ? '#38BDF8'
                         : '#F59E0B',
@@ -642,6 +704,8 @@ export default function ValidationScreen({
               >
                 {validationResults.qtyMatchStatus === 'EXACT'
                   ? isPickMode ? 'FULL ORDER' : 'FULL PO'
+                  : validationResults.isShortage && !isPickMode
+                  ? `SHORTAGE (-${validationResults.expectedQty - validationResults.parsedQty})`
                   : validationResults.qtyMatchStatus === 'PARTIAL'
                   ? 'PARTIAL'
                   : 'OVER-QTY'}
@@ -668,33 +732,58 @@ export default function ValidationScreen({
 
         {/* Action Buttons */}
         <View style={styles.actionContainer}>
-          {/* 1. Primary: Confirm & Add / Dispatch */}
-          <TouchableOpacity
-            style={[
-              styles.primaryButton,
-              isPickMode && { backgroundColor: '#F59E0B' },
-              !validationResults.isOverallPass && styles.buttonDisabled,
-            ]}
-            onPress={handleConfirmIntake}
-            disabled={!validationResults.isOverallPass || isSubmitting}
-            activeOpacity={0.85}
-          >
-            {isSubmitting ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <>
-                <Ionicons name={isPickMode ? 'open-outline' : 'checkmark-done-circle'} size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.primaryButtonText}>
-                  {isPickMode
-                    ? `Confirm & Dispatch (-${validationResults.parsedQty} units)`
-                    : `Confirm & Add to Inventory (+${validationResults.parsedQty} units)`}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {/* 1. Primary: Route to Supervisor if Shortage; Confirm & Add if Overall Pass */}
+          {validationResults.isShortage && !isPickMode ? (
+            <TouchableOpacity
+              style={[styles.primaryButton, { backgroundColor: '#F59E0B' }]}
+              onPress={() => {
+                setDiscrepancyNote(
+                  `Quantity Shortage: Physical count of ${validationResults.parsedQty} units is less than PO requirement of ${validationResults.expectedQty} units (-${validationResults.expectedQty - validationResults.parsedQty} units shortage). Routing to Supervisor Exception Inbox.`
+                );
+                setShowDiscrepancyModal(true);
+              }}
+              disabled={isSubmitting}
+              activeOpacity={0.85}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <>
+                  <Ionicons name="paper-plane" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.primaryButtonText}>
+                    Route Shortage to Supervisor ({validationResults.parsedQty} / {validationResults.expectedQty} units)
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[
+                styles.primaryButton,
+                isPickMode && { backgroundColor: '#F59E0B' },
+                !validationResults.isOverallPass && styles.buttonDisabled,
+              ]}
+              onPress={handleConfirmIntake}
+              disabled={!validationResults.isOverallPass || isSubmitting}
+              activeOpacity={0.85}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <>
+                  <Ionicons name={isPickMode ? 'open-outline' : 'checkmark-done-circle'} size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                  <Text style={styles.primaryButtonText}>
+                    {isPickMode
+                      ? `Confirm & Dispatch (-${validationResults.parsedQty} units)`
+                      : `Confirm & Add to Inventory (+${validationResults.parsedQty} units)`}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
 
-          {/* 2. Secondary: Flag Discrepancy & Quarantine (always available if mismatch) */}
-          {!validationResults.isOverallPass && (
+          {/* 2. Secondary: Flag Discrepancy & Quarantine (for other verification failures) */}
+          {!validationResults.isOverallPass && (!validationResults.isShortage || isPickMode) && (
             <TouchableOpacity
               style={styles.discrepancyButton}
               onPress={() => setShowDiscrepancyModal(true)}

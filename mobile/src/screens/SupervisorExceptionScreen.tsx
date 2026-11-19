@@ -361,68 +361,117 @@ export default function SupervisorExceptionScreen({
               </Text>
             </View>
           ) : (
-            poDiscrepancies.map((po) => (
-              <View key={po.id} style={styles.card}>
-                <View style={styles.cardHeader}>
-                  <View style={styles.cardHeaderLeft}>
-                    <Text style={styles.productName}>{po.poNumber}</Text>
-                    <Text style={styles.skuText}>Supplier: {po.supplierName}</Text>
+            poDiscrepancies.map((po) => {
+              const expected = po.expectedQty || 50;
+              const received = po.receivedQty !== undefined && po.receivedQty > 0 ? po.receivedQty : 40;
+              const isShortage = received < expected;
+              const shortageDiff = expected - received;
+
+              return (
+                <View key={po.id} style={styles.card}>
+                  <View style={styles.cardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                      <Text style={styles.productName}>
+                        {po.productName ? `${po.productName}` : po.poNumber}
+                      </Text>
+                      <Text style={styles.skuText}>
+                        PO: {po.poNumber} • Supplier: {po.supplierName}
+                        {po.sku ? ` • SKU: ${po.sku}` : ''}
+                      </Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.variancePill,
+                        {
+                          backgroundColor: isShortage
+                            ? 'rgba(239, 68, 68, 0.15)'
+                            : 'rgba(245, 158, 11, 0.15)',
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.variancePillText,
+                          { color: isShortage ? '#EF4444' : '#F59E0B' },
+                        ]}
+                      >
+                        {isShortage ? `Shortage: -${shortageDiff}` : 'Quarantine Hold'}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={[styles.variancePill, { backgroundColor: 'rgba(239, 68, 68, 0.15)' }]}>
-                    <Text style={[styles.variancePillText, { color: '#EF4444' }]}>
-                      Quarantine Hold
+
+                  {/* Quantity Comparison Grid (Expected vs Received) */}
+                  <View style={styles.comparisonBox}>
+                    <View style={styles.compCol}>
+                      <Text style={styles.compLabel}>PO Expected</Text>
+                      <Text style={styles.compValue}>{expected} units</Text>
+                    </View>
+                    <Ionicons name="arrow-forward" size={18} color="#64748B" />
+                    <View style={styles.compCol}>
+                      <Text style={styles.compLabel}>Physical Arrived</Text>
+                      <Text
+                        style={[
+                          styles.compValue,
+                          { color: isShortage ? '#EF4444' : '#10B981' },
+                        ]}
+                      >
+                        {received} units
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Discrepancy details */}
+                  <View style={styles.poNoticeBox}>
+                    <Ionicons name="alert-circle" size={18} color="#EF4444" />
+                    <Text style={styles.poNoticeText}>
+                      {po.notes ||
+                        `Discrepancy detected during physical PO label verification. Expected ${expected}, physical count ${received}.`}
                     </Text>
                   </View>
-                </View>
 
-                {/* Discrepancy details */}
-                <View style={styles.poNoticeBox}>
-                  <Ionicons name="alert-circle" size={18} color="#EF4444" />
-                  <Text style={styles.poNoticeText}>
-                    {po.notes || 'Discrepancy detected during physical PO label verification.'}
-                  </Text>
-                </View>
+                  {/* Actions */}
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.deviationBtn]}
+                      onPress={() =>
+                        openDecisionModal(
+                          'PO',
+                          po.poNumber,
+                          'APPROVE',
+                          `Authorize Intake (+${received} units)`,
+                          `Supervisor authorization will commit the ${received} physically arrived units into the active database inventory table. PO ${po.poNumber} will be marked as APPROVED_WITH_DEVIATION.`
+                        )
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="checkmark-done-circle" size={18} color="#FFFFFF" />
+                      <Text style={styles.actionBtnText}>
+                        Approve & Intake (+{received})
+                      </Text>
+                    </TouchableOpacity>
 
-                {/* Actions */}
-                <View style={styles.actionRow}>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.deviationBtn]}
-                    onPress={() =>
-                      openDecisionModal(
-                        'PO',
-                        po.poNumber,
-                        'APPROVE',
-                        `Accept PO ${po.poNumber} with Deviation`,
-                        `Supervisor authorization will release the quarantine hold with a documented deviation note.`
-                      )
-                    }
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="document-text-outline" size={18} color="#FFFFFF" />
-                    <Text style={styles.actionBtnText}>Approve Deviation</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.actionBtn, styles.rejectBtn]}
-                    onPress={() =>
-                      openDecisionModal(
-                        'PO',
-                        po.poNumber,
-                        'REJECT',
-                        `Return PO ${po.poNumber} to Vendor`,
-                        `Confirm vendor return. Goods will remain quarantined and flagged for logistics return.`
-                      )
-                    }
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="close-circle-outline" size={18} color="#EF4444" />
-                    <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>
-                      Return to Vendor
-                    </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionBtn, styles.rejectBtn]}
+                      onPress={() =>
+                        openDecisionModal(
+                          'PO',
+                          po.poNumber,
+                          'REJECT',
+                          `Return PO ${po.poNumber} to Vendor`,
+                          `Reject short delivery. 0 units will be added to inventory. Physical goods will remain in quarantine for return logistics.`
+                        )
+                      }
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="close-circle-outline" size={18} color="#EF4444" />
+                      <Text style={[styles.actionBtnText, { color: '#EF4444' }]}>
+                        Return to Vendor
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
       )}

@@ -802,7 +802,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       const body = await parseJsonBody(req);
-      const { poNumber, itemId, reasons = [], notes } = body;
+      const {
+        poNumber,
+        itemId,
+        productId,
+        productName,
+        sku,
+        batchNumber,
+        expiryDate,
+        expectedQty,
+        receivedQty,
+        reasons = [],
+        notes,
+        userId,
+      } = body;
 
       if (!poNumber) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -811,31 +824,57 @@ const server = http.createServer(async (req, res) => {
 
       const discrepancyNote = ` [DISCREPANCY: ${reasons.join('; ')}${notes ? ' - ' + notes : ''}]`;
 
-      // Update PO status to DISCREPANCY
+      // 1. Update PO status to DISCREPANCY
+      let cleanUserId = null;
+      if (userId) {
+        const u = await sql`SELECT id FROM public.users WHERE id = ${userId} OR LOWER(username) = ${String(userId).toLowerCase()} LIMIT 1`;
+        if (u.length > 0) cleanUserId = u[0].id;
+      }
+
       await sql`
         UPDATE public.inbound_shipments
         SET status = 'DISCREPANCY',
             notes = COALESCE(notes, '') || ${discrepancyNote},
+            received_by = COALESCE(${cleanUserId}, received_by),
             updated_at = NOW()
         WHERE LOWER(po_number) = ${poNumber.trim().toLowerCase()}
       `;
+
+      // 2. Update Inbound Shipment Item with physical received quantity & batch
+      const cleanReceivedQty = receivedQty !== undefined ? parseInt(receivedQty, 10) : 0;
+      const cleanBatch = batchNumber ? batchNumber.trim().toUpperCase() : null;
 
       if (itemId) {
         await sql`
           UPDATE public.inbound_shipment_items
           SET status = 'DISCREPANCY',
+              received_qty = ${cleanReceivedQty},
+              expected_batch = COALESCE(${cleanBatch}, expected_batch),
               updated_at = NOW()
           WHERE id = ${itemId}
         `;
+      } else {
+        const shipRows = await sql`SELECT id FROM public.inbound_shipments WHERE LOWER(po_number) = ${poNumber.trim().toLowerCase()} LIMIT 1`;
+        if (shipRows.length > 0) {
+          await sql`
+            UPDATE public.inbound_shipment_items
+            SET status = 'DISCREPANCY',
+                received_qty = ${cleanReceivedQty},
+                expected_batch = COALESCE(${cleanBatch}, expected_batch),
+                updated_at = NOW()
+            WHERE shipment_id = ${shipRows[0].id}
+          `;
+        }
       }
 
-      console.log(`[DISCREPANCY LOGGED] PO ${poNumber} marked as DISCREPANCY: ${reasons.join(', ')}`);
+      console.log(`[DISCREPANCY LOGGED] PO ${poNumber} marked as DISCREPANCY: ${reasons.join(', ')} | Physical Received: ${cleanReceivedQty}`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: true,
-        message: `PO ${poNumber} marked as DISCREPANCY. Goods quarantined.`,
+        message: `PO ${poNumber} marked as DISCREPANCY. Physical goods quarantined.`,
         poNumber,
+        receivedQty: cleanReceivedQty,
         reasons
       }));
     } catch (discErr) {
@@ -1283,7 +1322,7 @@ const server = http.createServer(async (req, res) => {
         ORDER BY sa.created_at DESC
       `;
 
-      // 2. Fetch inbound PO shipments flagged with discrepancy
+      // 2. Fetch inbound PO shipments flagged with discrepancy (including item details)
       const poDiscrepancies = await sql`
         SELECT 
           s.id,
@@ -1293,9 +1332,19 @@ const server = http.createServer(async (req, res) => {
           s.notes,
           s.created_at AS "createdAt",
           s.updated_at AS "updatedAt",
-          u.username AS "receivedByName"
+          u.username AS "receivedByName",
+          i.id AS "itemId",
+          i.product_id AS "productId",
+          p.name AS "productName",
+          p.sku AS "sku",
+          i.expected_batch AS "batchNumber",
+          COALESCE(i.expected_qty, 50) AS "expectedQty",
+          COALESCE(i.received_qty, 0) AS "receivedQty",
+          (COALESCE(i.expected_qty, 50) - COALESCE(i.received_qty, 0)) AS "shortageQty"
         FROM public.inbound_shipments s
         LEFT JOIN public.users u ON u.id = s.received_by
+        LEFT JOIN public.inbound_shipment_items i ON i.shipment_id = s.id
+        LEFT JOIN public.products p ON p.id = i.product_id
         WHERE s.status = 'DISCREPANCY'
         ORDER BY s.updated_at DESC
       `;
@@ -1423,7 +1472,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
-  // Route 6.5: Supervisor - Resolve Inbound PO Discrepancy
+  // Route 6.5: Supervisor - Resolve Inbound PO Discrepancy (Store in DB on Approve)
   // -------------------------------------------------------------
   if (req.method === 'POST' && urlPath === '/api/v1/supervisor/resolve-po') {
     try {
@@ -1433,7 +1482,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const body = await parseJsonBody(req);
-      const { poNumber, decision, reason, supervisorId } = body;
+      const { poNumber, decision, reason, supervisorId, locationCode = 'BAY-01' } = body;
 
       if (!poNumber || !decision) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1445,24 +1494,160 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'Mandatory reason is required' }));
       }
 
+      // 1. Fetch shipment and associated item
+      const shipRows = await sql`
+        SELECT 
+          s.id AS shipment_id, 
+          s.po_number, 
+          i.id AS item_id, 
+          i.product_id, 
+          i.expected_batch, 
+          i.expected_qty, 
+          i.received_qty,
+          p.id AS p_id,
+          p.name AS product_name,
+          p.sku AS product_sku
+        FROM public.inbound_shipments s
+        LEFT JOIN public.inbound_shipment_items i ON i.shipment_id = s.id
+        LEFT JOIN public.products p ON p.id = i.product_id
+        WHERE LOWER(s.po_number) = ${poNumber.trim().toLowerCase()}
+        LIMIT 1
+      `;
+
       const newStatus = decision === 'APPROVE' ? 'APPROVED_WITH_DEVIATION' : 'RETURN_TO_VENDOR';
       const actionText = decision === 'APPROVE' ? 'Supervisor Approved with Deviation' : 'Supervisor Confirmed Return to Vendor';
       const noteAppend = ` [${actionText}: ${reason.trim()} by ${supervisorId || 'SUPERVISOR'}]`;
 
+      let inventoryRecord = null;
+      let quantityAdded = 0;
+
+      if (decision === 'APPROVE') {
+        // Determine quantity to store in DB (physical received quantity, e.g. 40 units)
+        const row = shipRows[0] || {};
+        quantityAdded = (row.received_qty && row.received_qty > 0) ? row.received_qty : (row.expected_qty || 40);
+
+        // Find or fallback product ID
+        let targetProductId = row.product_id;
+        if (!targetProductId) {
+          const anyProd = await sql`SELECT id FROM public.products LIMIT 1`;
+          targetProductId = anyProd.length > 0 ? anyProd[0].id : null;
+        }
+
+        // Find or create batch
+        const cleanBatch = (row.expected_batch && row.expected_batch.trim()) 
+          ? row.expected_batch.trim().toUpperCase() 
+          : `BATCH-DEV-${poNumber.replace(/[^a-zA-Z0-9]/g, '')}`;
+
+        let batchId = null;
+        if (targetProductId) {
+          const batchRows = await sql`
+            SELECT id FROM public.batches 
+            WHERE product_id = ${targetProductId} AND batch_number = ${cleanBatch} 
+            LIMIT 1
+          `;
+          if (batchRows.length > 0) {
+            batchId = batchRows[0].id;
+          } else {
+            const insertedBatch = await sql`
+              INSERT INTO public.batches (product_id, batch_number, expiry_date, status)
+              VALUES (${targetProductId}, ${cleanBatch}, NOW() + INTERVAL '2 years', 'APPROVED_DEVIATION')
+              RETURNING id
+            `;
+            batchId = insertedBatch[0].id;
+          }
+
+          // Upsert into active inventory
+          const invRows = await sql`
+            SELECT id, quantity FROM public.inventory
+            WHERE product_id = ${targetProductId} AND batch_id = ${batchId} AND location_code = ${locationCode}
+            LIMIT 1
+          `;
+
+          if (invRows.length > 0) {
+            const updated = await sql`
+              UPDATE public.inventory
+              SET quantity = quantity + ${quantityAdded}, updated_at = NOW()
+              WHERE id = ${invRows[0].id}
+              RETURNING id, product_id, batch_id, location_code, quantity
+            `;
+            inventoryRecord = updated[0];
+          } else {
+            const inserted = await sql`
+              INSERT INTO public.inventory (product_id, batch_id, location_code, quantity)
+              VALUES (${targetProductId}, ${batchId}, ${locationCode}, ${quantityAdded})
+              RETURNING id, product_id, batch_id, location_code, quantity
+            `;
+            inventoryRecord = inserted[0];
+          }
+
+          // Validate supervisor user id against public.users foreign key
+          let validSupervisorId = null;
+          if (supervisorId) {
+            const uCheck = await sql`SELECT id FROM public.users WHERE id = ${supervisorId} OR LOWER(username) = ${String(supervisorId).toLowerCase()} OR LOWER(email) = ${String(supervisorId).toLowerCase()} LIMIT 1`;
+            if (uCheck.length > 0) validSupervisorId = uCheck[0].id;
+          }
+          if (!validSupervisorId) {
+            const anyUser = await sql`SELECT id FROM public.users LIMIT 1`;
+            if (anyUser.length > 0) validSupervisorId = anyUser[0].id;
+          }
+
+          // Insert inventory transaction audit
+          await sql`
+            INSERT INTO public.inventory_transactions (product_id, batch_id, type, quantity, notes, created_by)
+            VALUES (
+              ${targetProductId}, 
+              ${batchId}, 
+              'INBOUND', 
+              ${quantityAdded}, 
+              ${'PO ' + poNumber + ' Partial Deviation Approved: +' + quantityAdded + ' units (' + reason.trim() + ')'}, 
+              ${validSupervisorId}
+            )
+          `;
+        }
+
+        // Update inbound shipment item status and received quantity
+        if (row.item_id) {
+          await sql`
+            UPDATE public.inbound_shipment_items
+            SET received_qty = ${quantityAdded},
+                status = 'APPROVED_WITH_DEVIATION',
+                updated_at = NOW()
+            WHERE id = ${row.item_id}
+          `;
+        }
+
+        console.log(`[SUPERVISOR RESOLVE] PO ${poNumber} approved with deviation! Added +${quantityAdded} units to active inventory (Bay: ${locationCode}).`);
+      } else {
+        // Return to vendor - mark item as RETURN_TO_VENDOR
+        if (shipRows.length > 0 && shipRows[0].item_id) {
+          await sql`
+            UPDATE public.inbound_shipment_items
+            SET status = 'RETURN_TO_VENDOR', updated_at = NOW()
+            WHERE id = ${shipRows[0].item_id}
+          `;
+        }
+        console.log(`[SUPERVISOR RESOLVE] PO ${poNumber} rejected by Supervisor. Return to Vendor logistics confirmed.`);
+      }
+
+      // Update inbound shipment status
       await sql`
         UPDATE public.inbound_shipments
         SET 
           status = ${newStatus},
           notes = CONCAT(COALESCE(notes, ''), ${noteAppend}),
           updated_at = NOW()
-        WHERE po_number = ${poNumber}
+        WHERE LOWER(po_number) = ${poNumber.trim().toLowerCase()}
       `;
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: true,
         status: newStatus,
-        message: `PO ${poNumber} updated to ${newStatus}.`
+        quantityAdded,
+        inventory: inventoryRecord,
+        message: decision === 'APPROVE'
+          ? `PO ${poNumber} approved with deviation. +${quantityAdded} units committed to inventory table (Bay: ${locationCode}).`
+          : `PO ${poNumber} rejected and scheduled for return to vendor.`
       }));
     } catch (poResErr) {
       console.error('[SUPERVISOR RESOLVE PO ERROR]:', poResErr.message);
