@@ -23,7 +23,7 @@ export interface OutboundOrder {
   items: OutboundOrderItem[];
 }
 
-const STORAGE_ORDERS_KEY = '@congiotech_outbound_orders_v1';
+const STORAGE_ORDERS_KEY = '@congiotech_outbound_orders_v2';
 const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.47:8080';
 
 // Fallback seed customer orders matching the 5 Real Master Medicines
@@ -184,8 +184,15 @@ export async function getOutboundOrders(): Promise<{
   try {
     const cached = await safeStorage.getItem(STORAGE_ORDERS_KEY);
     if (cached) {
-      const parsed = JSON.parse(cached);
+      const parsed: OutboundOrder[] = JSON.parse(cached);
       if (Array.isArray(parsed) && parsed.length > 0) {
+        // Ensure all 5 real orders exist
+        for (const seed of SEED_OUTBOUND_ORDERS) {
+          if (!parsed.some((o) => o.orderNumber === seed.orderNumber)) {
+            parsed.push({ ...seed });
+          }
+        }
+        await safeStorage.setItem(STORAGE_ORDERS_KEY, JSON.stringify(parsed));
         return { data: parsed, source: 'local_cache' };
       }
     }

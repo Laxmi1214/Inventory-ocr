@@ -20,6 +20,8 @@ import { InboundShipmentWithItems } from '../services/receiving';
 import { OutboundOrder } from '../services/dispatch';
 import {
   decodePharmaBarcode,
+  matchPharmaMasterMedicine,
+  REAL_MASTER_MEDICINES,
   ExtractedLabelData,
 } from '../services/ocr';
 import { sendBase64ToPaddleOcr, sendImageToPaddleOcr } from '../services/inventoryService';
@@ -119,17 +121,32 @@ export default function ScannerScreen({
 
     isBusyRef.current = true;
     const decoded = decodePharmaBarcode(data, type);
-    const matchedItem = findMatchingPoItem(decoded.barcode || decoded.sku || decoded.productName || '');
+    const matchedMaster = matchPharmaMasterMedicine(decoded.barcode || decoded.sku || decoded.productName || data);
+    const matchedPoItem = findMatchingPoItem(decoded.barcode || decoded.sku || decoded.productName || data);
 
     setScanSource(decoded.source === 'QR_CODE' ? 'QR_CODE' : 'BARCODE');
     setRawCode(data);
-    setProductName(decoded.productName || matchedItem?.product?.name || primaryItem?.name || '');
-    setSku(decoded.sku || matchedItem?.product?.sku || primaryItem?.sku || '');
-    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || defaultExpectedBatch);
-    setMfgDate(decoded.mfgDate || '');
-    setExpiryDate(decoded.expiryDate || '');
-    setQuantity((matchedItem?.expectedQty || defaultExpectedQty).toString());
-    setPrice(decoded.price ? decoded.price.toString() : '');
+
+    // Dynamic resolution: strictly match against scanned physical item, NEVER sticky fallback to primary expected item
+    const resolvedName =
+      decoded.productName ||
+      matchedMaster?.name ||
+      matchedPoItem?.product?.name ||
+      (data ? `Scanned (${data.substring(0, 16)})` : '');
+    const resolvedSku = decoded.sku || matchedMaster?.sku || matchedPoItem?.product?.sku || '';
+    const resolvedBatch = decoded.batchNumber || matchedMaster?.batchNumber || matchedPoItem?.expectedBatch || '';
+    const resolvedMfg = decoded.mfgDate || matchedMaster?.mfgDate || '';
+    const resolvedExpiry = decoded.expiryDate || matchedMaster?.expiryDate || '';
+    const resolvedPrice = decoded.price ? decoded.price.toString() : (matchedMaster?.price ? matchedMaster.price.toString() : '');
+    const resolvedQty = (matchedPoItem?.expectedQty || defaultExpectedQty).toString();
+
+    setProductName(resolvedName);
+    setSku(resolvedSku);
+    setBatchNumber(resolvedBatch);
+    setMfgDate(resolvedMfg);
+    setExpiryDate(resolvedExpiry);
+    setQuantity(resolvedQty);
+    setPrice(resolvedPrice);
     setDetectedLines([]);
     setShowResultModal(true);
   };
@@ -181,7 +198,9 @@ export default function ScannerScreen({
         return;
       }
 
-      const matchedItem = findMatchingPoItem(ocrData.medicineName || ocrData.sku || ocrData.rawText || '');
+      const combinedOcrText = [ocrData.medicineName, ocrData.sku, ocrData.rawText].filter(Boolean).join(' ');
+      const matchedMaster = matchPharmaMasterMedicine(combinedOcrText);
+      const matchedPoItem = findMatchingPoItem(ocrData.medicineName || ocrData.sku || ocrData.rawText || '');
 
       setScanSource('OCR');
       setRawCode('');
@@ -190,20 +209,26 @@ export default function ScannerScreen({
       }
 
       const detectedName = ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' && ocrData.medicineName !== 'No text detected' ? ocrData.medicineName : '';
-      const finalName = detectedName || matchedItem?.product?.name || primaryItem?.name || '';
-      const finalSku = ocrData.sku || matchedItem?.product?.sku || primaryItem?.sku || '';
-      const finalBatch = ocrData.batchNumber || matchedItem?.expectedBatch || defaultExpectedBatch;
-      const finalMfg = ocrData.mfgDate || '';
-      const finalExp = ocrData.expiryDate || '';
+      const finalName =
+        matchedMaster?.name ||
+        detectedName ||
+        matchedPoItem?.product?.name ||
+        (ocrData.allLines?.[0] || 'Unrecognized Package Text');
+      const finalSku = matchedMaster?.sku || ocrData.sku || matchedPoItem?.product?.sku || '';
+      const finalBatch = matchedMaster?.batchNumber || ocrData.batchNumber || matchedPoItem?.expectedBatch || '';
+      const finalMfg = matchedMaster?.mfgDate || ocrData.mfgDate || '';
+      const finalExp = matchedMaster?.expiryDate || ocrData.expiryDate || '';
+      const finalPrice = ocrData.mrp ? ocrData.mrp.toString() : (matchedMaster?.price ? matchedMaster.price.toString() : '');
+      const finalQty = (matchedPoItem?.expectedQty || defaultExpectedQty).toString();
 
       setProductName(finalName);
       setSku(finalSku);
       setBatchNumber(finalBatch);
       setMfgDate(finalMfg);
       setExpiryDate(finalExp);
-      setQuantity((matchedItem?.expectedQty || defaultExpectedQty).toString());
-      setPrice(ocrData.mrp ? ocrData.mrp.toString() : '');
-      setDetectedLines([]);
+      setQuantity(finalQty);
+      setPrice(finalPrice);
+      setDetectedLines(ocrData.allLines || []);
       setShowResultModal(true);
     } catch (err: any) {
       console.warn('OCR capture error:', err);
@@ -224,9 +249,9 @@ export default function ScannerScreen({
             onPress: () => {
               const expected = primaryItem;
               setScanSource('OCR');
-              setProductName(expected?.name || 'Paracetamol 500mg Tablets');
-              setSku(expected?.sku || 'MED-PARA-500');
-              setBatchNumber(defaultExpectedBatch || 'BTH-PAR-26045');
+              setProductName(expected?.name || '');
+              setSku(expected?.sku || '');
+              setBatchNumber(defaultExpectedBatch || '');
               setQuantity(defaultExpectedQty.toString());
               setShowResultModal(true);
             },
@@ -253,23 +278,25 @@ export default function ScannerScreen({
 
   // 3. Manual Entry Fallback Handler
   const handleManualSubmit = () => {
-    if (!manualCode.trim()) {
+    const cleanManual = manualCode.trim();
+    if (!cleanManual) {
       Alert.alert('Input Required', 'Please enter a barcode number or product SKU.');
       return;
     }
 
-    const decoded = decodePharmaBarcode(manualCode.trim(), 'manual');
-    const matchedItem = findMatchingPoItem(manualCode.trim());
+    const decoded = decodePharmaBarcode(cleanManual, 'manual');
+    const matchedMaster = matchPharmaMasterMedicine(cleanManual);
+    const matchedPoItem = findMatchingPoItem(cleanManual);
 
     setScanSource('MANUAL');
-    setRawCode(manualCode.trim());
-    setProductName(decoded.productName || matchedItem?.product?.name || primaryItem?.name || '');
-    setSku(decoded.sku || matchedItem?.product?.sku || manualCode.trim());
-    setBatchNumber(decoded.batchNumber || matchedItem?.expectedBatch || defaultExpectedBatch);
-    setMfgDate('');
-    setExpiryDate(decoded.expiryDate || '');
-    setQuantity((matchedItem?.expectedQty || defaultExpectedQty).toString());
-    setPrice('');
+    setRawCode(cleanManual);
+    setProductName(decoded.productName || matchedMaster?.name || matchedPoItem?.product?.name || cleanManual);
+    setSku(decoded.sku || matchedMaster?.sku || matchedPoItem?.product?.sku || cleanManual);
+    setBatchNumber(decoded.batchNumber || matchedMaster?.batchNumber || matchedPoItem?.expectedBatch || '');
+    setMfgDate(matchedMaster?.mfgDate || '');
+    setExpiryDate(decoded.expiryDate || matchedMaster?.expiryDate || '');
+    setQuantity((matchedPoItem?.expectedQty || defaultExpectedQty).toString());
+    setPrice(matchedMaster?.price ? matchedMaster.price.toString() : '');
     setDetectedLines([]);
 
     setShowManualModal(false);

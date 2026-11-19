@@ -25,7 +25,8 @@ export const REAL_MASTER_MEDICINES = [
     name: 'Calpol 650 Tablets',
     sku: 'MED-CALP-650',
     productId: '62000000089737',
-    barcodes: ['62000000089737', 'MED-CALP-650'],
+    barcodes: ['62000000089737', 'MED-CALP-650', '62000000', '89737'],
+    keywords: ['CALPOL', 'OPTIZORB', 'GLAXOSMITHKLINE', 'GSK', 'PARACETAMOL', '62000000089737'],
     batchNumber: 'BTH-CALP-2601',
     expiryDate: '10/2028',
     mfgDate: '04/2026',
@@ -41,7 +42,8 @@ export const REAL_MASTER_MEDICINES = [
     name: 'Claribid 500 Tablets',
     sku: 'MED-CLAR-500',
     productId: '8901117245102',
-    barcodes: ['8901117245102', 'MED-CLAR-500'],
+    barcodes: ['8901117245102', '08901117245102', 'MED-CLAR-500', '1117245102'],
+    keywords: ['CLARIBID', 'CLARITHROMYCIN', 'ABBOTT', 'TARAPUR', '8901117245102'],
     batchNumber: 'BTH-CLAR-4091',
     expiryDate: '08/2027',
     mfgDate: '02/2026',
@@ -57,7 +59,8 @@ export const REAL_MASTER_MEDICINES = [
     name: 'Azithromycin Tablets USP 250mg',
     sku: 'MED-AZIT-250',
     productId: '00368094900188',
-    barcodes: ['00368094900188', '331703202318', '4242407041', '6809490018', '68094-900-18', 'MED-AZIT-250'],
+    barcodes: ['00368094900188', '0368094900188', '368094900188', '331703202318', '4242407041', '6809490018', '68094-900-18', 'MED-AZIT-250'],
+    keywords: ['AZITHROMYCIN', 'PRECISIONDOSE', 'CSPC', '00368094900188', '331703202318', '4242407041', '68094'],
     batchNumber: '4242407041',
     expiryDate: '07/2027',
     mfgDate: '07/2025',
@@ -73,7 +76,8 @@ export const REAL_MASTER_MEDICINES = [
     name: 'Amlokind 5 Tablets',
     sku: 'MED-AMLO-005',
     productId: '8904103311105',
-    barcodes: ['8904103311105', 'MED-AMLO-005'],
+    barcodes: ['8904103311105', '08904103311105', 'MED-AMLO-005', '4103311105'],
+    keywords: ['AMLOKIND', 'AMLODIPINE', 'MANKIND', 'MEDFORCE', '8904103311105'],
     batchNumber: 'BTH-AMLO-5510',
     expiryDate: '09/2028',
     mfgDate: '03/2026',
@@ -89,7 +93,8 @@ export const REAL_MASTER_MEDICINES = [
     name: 'Acticlate 150mg Tablets',
     sku: 'MED-ACTI-150',
     productId: '316110502014',
-    barcodes: ['316110502014', '1611050201', '16110502014', '16110-502-01', 'MED-ACTI-150'],
+    barcodes: ['316110502014', '0316110502014', '1611050201', '16110502014', '16110-502-01', '16110-502', 'MED-ACTI-150'],
+    keywords: ['ACTICLATE', 'DOXYCYCLINE', 'ALMIRALL', 'CATALENT', '16110-502', '316110502014'],
     batchNumber: 'BTH-ACTI-7812',
     expiryDate: '06/2029',
     mfgDate: '06/2026',
@@ -104,6 +109,43 @@ export const REAL_MASTER_MEDICINES = [
 ];
 
 /**
+ * Universal matcher for the 5 Real Pharmaceutical Master Medicines
+ */
+export function matchPharmaMasterMedicine(codeOrText?: string) {
+  if (!codeOrText) return null;
+  const clean = codeOrText.trim();
+  const upper = clean.toUpperCase();
+  const digits = clean.replace(/\D/g, '');
+
+  for (const m of REAL_MASTER_MEDICINES) {
+    // 1. Direct match on brand name keyword
+    const brandKeyword = m.name.toUpperCase().split(' ')[0]; // 'CALPOL', 'CLARIBID', 'AZITHROMYCIN', 'AMLOKIND', 'ACTICLATE'
+    if (upper.includes(brandKeyword)) return m;
+
+    // 2. Direct match on SKU
+    if (upper.includes(m.sku.toUpperCase())) return m;
+
+    // 3. Direct match on productId
+    if (m.productId && (upper.includes(m.productId.toUpperCase()) || clean === m.productId)) return m;
+
+    // 4. Barcodes and numbers
+    for (const b of m.barcodes) {
+      if (upper.includes(b.toUpperCase()) || clean === b) return m;
+      const bDigits = b.replace(/\D/g, '');
+      if (bDigits.length >= 6 && digits.length >= 6 && (digits.includes(bDigits) || bDigits.includes(digits))) {
+        return m;
+      }
+    }
+
+    // 5. Packaging keywords
+    if (m.keywords && m.keywords.some((k) => upper.includes(k.toUpperCase()))) {
+      return m;
+    }
+  }
+  return null;
+}
+
+/**
  * Decodes barcode or QR code string and extracts structured fields
  */
 export function decodePharmaBarcode(rawCode: string, codeType?: string): ExtractedLabelData {
@@ -112,13 +154,7 @@ export function decodePharmaBarcode(rawCode: string, codeType?: string): Extract
   const isQR = codeType?.toLowerCase().includes('qr') || cleanCode.startsWith('{') || cleanCode.includes('http');
 
   // Direct Match against 5 Real Master Medicines
-  const matchedMaster = REAL_MASTER_MEDICINES.find(
-    (m) =>
-      m.productId === cleanCode ||
-      m.sku.toUpperCase() === upperCode ||
-      m.barcodes.some((b) => b.toUpperCase() === upperCode || cleanCode.includes(b)) ||
-      upperCode.includes(m.name.toUpperCase().split(' ')[0])
-  );
+  const matchedMaster = matchPharmaMasterMedicine(cleanCode);
 
   if (matchedMaster) {
     return {
@@ -235,12 +271,17 @@ export function decodePharmaBarcode(rawCode: string, codeType?: string): Extract
       }
 
       if (gtin || batch || expiry) {
+        const masterByGtin = matchPharmaMasterMedicine(gtin || cleanCode);
         return {
           source: isQR ? 'QR_CODE' : 'BARCODE',
           barcode: gtin || cleanCode,
           barcodeType: isQR ? 'GS1_QR_CODE' : 'GS1_DATAMATRIX',
-          batchNumber: batch || undefined,
-          expiryDate: expiry || undefined,
+          productName: masterByGtin?.name,
+          sku: masterByGtin?.sku,
+          batchNumber: batch || masterByGtin?.batchNumber,
+          expiryDate: expiry || masterByGtin?.expiryDate,
+          mfgDate: masterByGtin?.mfgDate,
+          price: masterByGtin?.price,
           confidence: 1.0,
           rawText: cleanCode,
         };
@@ -250,12 +291,19 @@ export function decodePharmaBarcode(rawCode: string, codeType?: string): Extract
     }
   }
 
-  // Case 5: Standard 1D Barcode or Plain QR Code
+  // Case 5: Standard 1D Barcode, Numeric EAN/UPC, or Plain QR Code
+  const masterMatch = matchPharmaMasterMedicine(cleanCode);
   return {
     source: isQR ? 'QR_CODE' : 'BARCODE',
     barcode: cleanCode,
     barcodeType: codeType?.toUpperCase() || (isQR ? 'QR_CODE' : 'BARCODE'),
-    confidence: 1.0,
+    productName: masterMatch?.name,
+    sku: masterMatch?.sku,
+    batchNumber: masterMatch?.batchNumber,
+    expiryDate: masterMatch?.expiryDate,
+    mfgDate: masterMatch?.mfgDate,
+    price: masterMatch?.price,
+    confidence: masterMatch ? 1.0 : 0.8,
     rawText: cleanCode,
   };
 }

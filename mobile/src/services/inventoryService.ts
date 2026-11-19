@@ -34,8 +34,8 @@ export interface OcrScanResult {
   linesCount?: number;
 }
 
-const STORAGE_INVENTORY_KEY = '@congiotech_inventory_items_v1';
-const STORAGE_TRANSACTIONS_KEY = '@congiotech_inventory_transactions_v1';
+const STORAGE_INVENTORY_KEY = '@congiotech_inventory_items_v2';
+const STORAGE_TRANSACTIONS_KEY = '@congiotech_inventory_transactions_v2';
 
 // Initial pre-loaded stock matching real database inventory (5 Real Packaging Medicines)
 const INITIAL_STOCK: Array<{
@@ -189,9 +189,15 @@ export async function getInventoryMetrics(): Promise<InventoryMetrics> {
     }
 
     const stockRaw = await safeStorage.getItem(STORAGE_INVENTORY_KEY);
-    let stockItems = stockRaw ? JSON.parse(stockRaw) : INITIAL_STOCK;
+    let stockItems = stockRaw ? JSON.parse(stockRaw) : [...INITIAL_STOCK];
+    // Auto-merge 5 Real Master Medicines
+    for (const seed of INITIAL_STOCK) {
+      if (!stockItems.some((s: any) => (s.sku && s.sku.toLowerCase() === seed.sku.toLowerCase()) || s.name.toLowerCase() === seed.name.toLowerCase())) {
+        stockItems.push({ ...seed });
+      }
+    }
     if (!stockRaw) {
-      await safeStorage.setItem(STORAGE_INVENTORY_KEY, JSON.stringify(INITIAL_STOCK));
+      await safeStorage.setItem(STORAGE_INVENTORY_KEY, JSON.stringify(stockItems));
     }
 
     let totalIncome = 0;
@@ -357,6 +363,13 @@ export async function recordMedicineMovement(params: {
     const stockRaw = await safeStorage.getItem(STORAGE_INVENTORY_KEY);
     let stockItems: any[] = stockRaw ? JSON.parse(stockRaw) : [...INITIAL_STOCK];
 
+    // Ensure all 5 master medicines exist in local stockItems
+    for (const seed of INITIAL_STOCK) {
+      if (!stockItems.some((s: any) => (s.sku && s.sku.toLowerCase() === seed.sku.toLowerCase()) || s.name.toLowerCase() === seed.name.toLowerCase())) {
+        stockItems.push({ ...seed });
+      }
+    }
+
     let existingIndex = stockItems.findIndex(
       (item) =>
         (item.name.toLowerCase() === cleanMedName.toLowerCase() ||
@@ -380,10 +393,23 @@ export async function recordMedicineMovement(params: {
 
     if (type === 'OUTBOUND') {
       if (existingIndex === -1) {
-        return {
-          success: false,
-          error: `Medicine "${cleanMedName}" not found in current inventory stock to dispatch.`,
-        };
+        // Auto-seed missing master medicine with baseline 50 units
+        const seedItem = INITIAL_STOCK.find(
+          (s) =>
+            s.name.toLowerCase() === cleanMedName.toLowerCase() ||
+            (sku && s.sku.toLowerCase() === sku.toLowerCase()) ||
+            s.name.toLowerCase().includes(cleanMedName.toLowerCase()) ||
+            cleanMedName.toLowerCase().includes(s.name.toLowerCase())
+        );
+        if (seedItem) {
+          stockItems.push({ ...seedItem });
+          existingIndex = stockItems.length - 1;
+        } else {
+          return {
+            success: false,
+            error: `Medicine "${cleanMedName}" not found in current inventory stock to dispatch.`,
+          };
+        }
       }
       if (stockItems[existingIndex].quantity < quantity) {
         return {
