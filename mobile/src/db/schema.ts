@@ -159,6 +159,41 @@ export const stockAudits = pgTable('stock_audits', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * 8. Outbound Orders Table (Customer Sales Orders for Pick & Pack)
+ */
+export const outboundOrders = pgTable('outbound_orders', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  orderNumber: varchar('order_number', { length: 100 }).notNull().unique(),
+  customerName: varchar('customer_name', { length: 255 }).notNull(),
+  status: varchar('status', { length: 50 }).notNull().default('PENDING'), // 'PENDING' | 'IN_PROGRESS' | 'DISPATCHED'
+  priority: varchar('priority', { length: 50 }).notNull().default('NORMAL'), // 'NORMAL' | 'URGENT' | 'COLD_CHAIN'
+  deliveryDate: timestamp('delivery_date', { withTimezone: true }),
+  notes: text('notes'),
+  dispatchedBy: varchar('dispatched_by', { length: 100 }).references(() => users.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * 9. Outbound Order Items Table
+ */
+export const outboundOrderItems = pgTable('outbound_order_items', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  orderId: uuid('order_id')
+    .notNull()
+    .references(() => outboundOrders.id, { onDelete: 'cascade' }),
+  productId: uuid('product_id').references(() => products.id, { onDelete: 'set null' }),
+  productName: varchar('product_name', { length: 255 }).notNull(),
+  sku: varchar('sku', { length: 100 }).notNull(),
+  requiredQty: integer('required_qty').notNull(),
+  pickedQty: integer('picked_qty').notNull().default(0),
+  status: varchar('status', { length: 50 }).notNull().default('PENDING'),
+  suggestedBatch: varchar('suggested_batch', { length: 100 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 // Relationships
 export const rolesRelations = relations(roles, ({ many }) => ({
   users: many(users),
@@ -261,3 +296,9 @@ export type NewInventoryTransaction = typeof inventoryTransactions.$inferInsert;
 
 export type StockAudit = typeof stockAudits.$inferSelect;
 export type NewStockAudit = typeof stockAudits.$inferInsert;
+
+export type OutboundOrder = typeof outboundOrders.$inferSelect;
+export type NewOutboundOrder = typeof outboundOrders.$inferInsert;
+
+export type OutboundOrderItem = typeof outboundOrderItems.$inferSelect;
+export type NewOutboundOrderItem = typeof outboundOrderItems.$inferInsert;

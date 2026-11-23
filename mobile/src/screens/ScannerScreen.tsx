@@ -96,7 +96,7 @@ export default function ScannerScreen({
   const [batchNumber, setBatchNumber] = useState('');
   const [mfgDate, setMfgDate] = useState('');
   const [expiryDate, setExpiryDate] = useState('');
-  const [quantity, setQuantity] = useState(defaultExpectedQty.toString());
+  const [quantity, setQuantity] = useState('');
   const [price, setPrice] = useState('');
   const [scanSource, setScanSource] = useState<'BARCODE' | 'QR_CODE' | 'OCR' | 'MANUAL'>('OCR');
   const [detectedLines, setDetectedLines] = useState<string[]>([]);
@@ -127,18 +127,18 @@ export default function ScannerScreen({
     setScanSource(decoded.source === 'QR_CODE' ? 'QR_CODE' : 'BARCODE');
     setRawCode(data);
 
-    // Dynamic resolution: strictly match against scanned physical item, NEVER sticky fallback to primary expected item
+    // Dynamic resolution: strictly match against scanned physical item, NEVER auto-assume quantity
     const resolvedName =
       decoded.productName ||
       matchedMaster?.name ||
       matchedPoItem?.product?.name ||
       (data ? `Scanned (${data.substring(0, 16)})` : '');
     const resolvedSku = decoded.sku || matchedMaster?.sku || matchedPoItem?.product?.sku || '';
-    const resolvedBatch = decoded.batchNumber || matchedMaster?.batchNumber || matchedPoItem?.expectedBatch || '';
-    const resolvedMfg = decoded.mfgDate || matchedMaster?.mfgDate || '';
-    const resolvedExpiry = decoded.expiryDate || matchedMaster?.expiryDate || '';
-    const resolvedPrice = decoded.price ? decoded.price.toString() : (matchedMaster?.price ? matchedMaster.price.toString() : '');
-    const resolvedQty = (matchedPoItem?.expectedQty || defaultExpectedQty).toString();
+    const resolvedBatch = decoded.batchNumber || '';
+    const resolvedMfg = decoded.mfgDate || '';
+    const resolvedExpiry = decoded.expiryDate || '';
+    const resolvedPrice = decoded.price ? decoded.price.toString() : '';
+    const resolvedQty = '';
 
     setProductName(resolvedName);
     setSku(resolvedSku);
@@ -209,17 +209,13 @@ export default function ScannerScreen({
       }
 
       const detectedName = ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' && ocrData.medicineName !== 'No text detected' ? ocrData.medicineName : '';
-      const finalName =
-        matchedMaster?.name ||
-        detectedName ||
-        matchedPoItem?.product?.name ||
-        (ocrData.allLines?.[0] || 'Unrecognized Package Text');
-      const finalSku = matchedMaster?.sku || ocrData.sku || matchedPoItem?.product?.sku || '';
-      const finalBatch = matchedMaster?.batchNumber || ocrData.batchNumber || matchedPoItem?.expectedBatch || '';
-      const finalMfg = matchedMaster?.mfgDate || ocrData.mfgDate || '';
-      const finalExp = matchedMaster?.expiryDate || ocrData.expiryDate || '';
-      const finalPrice = ocrData.mrp ? ocrData.mrp.toString() : (matchedMaster?.price ? matchedMaster.price.toString() : '');
-      const finalQty = (matchedPoItem?.expectedQty || defaultExpectedQty).toString();
+      const finalName = detectedName || matchedPoItem?.product?.name || (ocrData.allLines?.[0] || '');
+      const finalSku = ocrData.sku || matchedPoItem?.product?.sku || '';
+      const finalBatch = ocrData.batchNumber || '';
+      const finalMfg = ocrData.mfgDate || '';
+      const finalExp = ocrData.expiryDate || '';
+      const finalPrice = ocrData.mrp ? ocrData.mrp.toString() : '';
+      const finalQty = '';
 
       setProductName(finalName);
       setSku(finalSku);
@@ -241,7 +237,7 @@ export default function ScannerScreen({
       Alert.alert(
         'OCR Microservice Notice',
         isConnectionError
-          ? `Backend OCR server unreachable (${targetCode ? `Order ${targetCode}` : 'at 192.168.1.47:8080'}).\n\nMake sure 'node backend/bridge.js' is running on your PC.\n\nWould you like to auto-fill expected medicine details or enter manually?`
+          ? `Backend OCR server unreachable (${targetCode ? `Order ${targetCode}` : 'at 192.168.1.49:8080'}).\n\nMake sure 'node backend/bridge.js' is running on your PC.\n\nWould you like to auto-fill expected medicine details or enter manually?`
           : (err.message || 'Failed to process image with OCR microservice.'),
         [
           {
@@ -252,7 +248,7 @@ export default function ScannerScreen({
               setProductName(expected?.name || '');
               setSku(expected?.sku || '');
               setBatchNumber(defaultExpectedBatch || '');
-              setQuantity(defaultExpectedQty.toString());
+              setQuantity('');
               setShowResultModal(true);
             },
           },
@@ -292,11 +288,11 @@ export default function ScannerScreen({
     setRawCode(cleanManual);
     setProductName(decoded.productName || matchedMaster?.name || matchedPoItem?.product?.name || cleanManual);
     setSku(decoded.sku || matchedMaster?.sku || matchedPoItem?.product?.sku || cleanManual);
-    setBatchNumber(decoded.batchNumber || matchedMaster?.batchNumber || matchedPoItem?.expectedBatch || '');
-    setMfgDate(matchedMaster?.mfgDate || '');
-    setExpiryDate(decoded.expiryDate || matchedMaster?.expiryDate || '');
-    setQuantity((matchedPoItem?.expectedQty || defaultExpectedQty).toString());
-    setPrice(matchedMaster?.price ? matchedMaster.price.toString() : '');
+    setBatchNumber(decoded.batchNumber || '');
+    setMfgDate('');
+    setExpiryDate(decoded.expiryDate || '');
+    setQuantity('');
+    setPrice('');
     setDetectedLines([]);
 
     setShowManualModal(false);
@@ -319,8 +315,11 @@ export default function ScannerScreen({
       return;
     }
     const numQty = parseInt(quantity, 10);
-    if (isNaN(numQty) || numQty <= 0) {
-      Alert.alert('Validation Error', 'Please enter a valid quantity greater than 0.');
+    if (!quantity.trim() || isNaN(numQty) || numQty <= 0) {
+      Alert.alert(
+        'Physical Count Required',
+        'Pharma compliance requires the warehouse operator to physically count the delivery packs and enter the verified quantity. Please enter the physical pack count.'
+      );
       return;
     }
 
@@ -830,6 +829,8 @@ export default function ScannerScreen({
                     style={styles.stepperInput}
                     value={quantity}
                     onChangeText={setQuantity}
+                    placeholder="Count"
+                    placeholderTextColor="#64748B"
                     keyboardType="numeric"
                   />
 

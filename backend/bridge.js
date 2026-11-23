@@ -558,12 +558,47 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
-  // Route 4.5: Get All Outbound Customer Orders (Pick & Pack)
+  // Route 4.5: Get All Outbound Customer Orders (Pick & Pack) from DB
   // -------------------------------------------------------------
   if (req.method === 'GET' && (urlPath === '/api/v1/orders' || urlPath === '/api/v1/picking/orders')) {
     try {
+      if (!sql) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: true, orders: outboundOrdersStore }));
+      }
+
+      const orders = await sql`
+        SELECT 
+          o.id,
+          o.order_number AS "orderNumber",
+          o.customer_name AS "customerName",
+          o.status,
+          o.priority,
+          o.delivery_date AS "deliveryDate",
+          o.notes,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', i.id,
+                'productId', i.product_id,
+                'productName', i.product_name,
+                'sku', i.sku,
+                'requiredQty', i.required_qty,
+                'pickedQty', i.picked_qty,
+                'status', i.status,
+                'suggestedBatch', i.suggested_batch
+              )
+            ) FILTER (WHERE i.id IS NOT NULL),
+            '[]'::json
+          ) AS items
+        FROM public.outbound_orders o
+        LEFT JOIN public.outbound_order_items i ON i.order_id = o.id
+        GROUP BY o.id
+        ORDER BY o.created_at ASC
+      `;
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      return res.end(JSON.stringify({ success: true, orders: outboundOrdersStore }));
+      return res.end(JSON.stringify({ success: true, orders }));
     } catch (orderErr) {
       console.error('[DB ORDERS ERROR]:', orderErr.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -1017,8 +1052,59 @@ const server = http.createServer(async (req, res) => {
 
       console.log(`[DB DISPATCH SUCCESS] Dispatched ${numQty} units of ${product.name} (Batch: ${batch.batch_number}). Remaining stock: ${updatedInv[0].quantity}`);
 
-      // Update outbound order in memory if orderNumber is matched
+      // 7. Update Outbound Order and Items directly in PostgreSQL Database
       if (orderNumber) {
+        try {
+          const orderRows = await sql`
+            SELECT id FROM public.outbound_orders 
+            WHERE UPPER(order_number) = ${orderNumber.trim().toUpperCase()}
+            LIMIT 1
+          `;
+          if (orderRows.length > 0) {
+            const orderId = orderRows[0].id;
+
+            // Find matching item
+            const itemRows = await sql`
+              SELECT id, required_qty, picked_qty 
+              FROM public.outbound_order_items
+              WHERE order_id = ${orderId} 
+                AND (UPPER(sku) = ${cleanSku.toUpperCase()} OR LOWER(product_name) = ${cleanProdName.toLowerCase()})
+              LIMIT 1
+            `;
+
+            const targetItemId = itemRows.length > 0 ? itemRows[0].id : null;
+            if (targetItemId) {
+              const currentItem = itemRows[0];
+              const newPicked = (currentItem.picked_qty || 0) + numQty;
+              const itemStatus = newPicked >= currentItem.required_qty ? 'COMPLETED' : 'IN_PROGRESS';
+
+              await sql`
+                UPDATE public.outbound_order_items
+                SET picked_qty = ${newPicked}, status = ${itemStatus}, updated_at = NOW()
+                WHERE id = ${targetItemId}
+              `;
+            }
+
+            // Check if all items in order are completed
+            const remainingItems = await sql`
+              SELECT id FROM public.outbound_order_items
+              WHERE order_id = ${orderId} AND status != 'COMPLETED'
+              LIMIT 1
+            `;
+
+            const newOrderStatus = remainingItems.length === 0 ? 'DISPATCHED' : 'IN_PROGRESS';
+            await sql`
+              UPDATE public.outbound_orders
+              SET status = ${newOrderStatus}, dispatched_by = ${validUserId}, updated_at = NOW()
+              WHERE id = ${orderId}
+            `;
+            console.log(`[DB OUTBOUND ORDER UPDATE] Order ${orderNumber} updated in PostgreSQL to ${newOrderStatus}`);
+          }
+        } catch (dbOrderErr) {
+          console.warn('[DB OUTBOUND ORDER NOTICE]:', dbOrderErr.message);
+        }
+
+        // Also sync memory store for any local listeners
         const order = outboundOrdersStore.find(o => o.orderNumber.toUpperCase() === orderNumber.trim().toUpperCase());
         if (order) {
           const item = order.items.find(i => i.sku.toUpperCase() === cleanSku.toUpperCase() || i.productName.toLowerCase() === cleanProdName.toLowerCase()) || order.items[0];
@@ -1394,13 +1480,24 @@ const server = http.createServer(async (req, res) => {
       }
       const audit = auditRows[0];
 
+      // Validate supervisor user id against public.users foreign key
+      let validSupervisorId = null;
+      if (supervisorId) {
+        const uCheck = await sql`SELECT id FROM public.users WHERE id = ${supervisorId} OR LOWER(username) = ${String(supervisorId).toLowerCase()} OR LOWER(email) = ${String(supervisorId).toLowerCase()} LIMIT 1`;
+        if (uCheck.length > 0) validSupervisorId = uCheck[0].id;
+      }
+      if (!validSupervisorId) {
+        const anyUser = await sql`SELECT id FROM public.users LIMIT 1`;
+        if (anyUser.length > 0) validSupervisorId = anyUser[0].id;
+      }
+
       if (decision === 'APPROVE') {
         // 1. Mark audit APPROVED
         await sql`
           UPDATE public.stock_audits
           SET 
             status = 'APPROVED',
-            supervisor_id = ${supervisorId || 'SUPERVISOR'},
+            supervisor_id = ${validSupervisorId},
             supervisor_notes = ${reason.trim()},
             updated_at = NOW()
           WHERE id = ${auditId}
@@ -1433,7 +1530,7 @@ const server = http.createServer(async (req, res) => {
             'AUDIT_OVERRIDE',
             ${audit.variance},
             ${'Supervisor Approved Variance Override: ' + reason.trim()},
-            ${supervisorId || 'SUPERVISOR'}
+            ${validSupervisorId}
           )
         `;
 
@@ -1450,7 +1547,7 @@ const server = http.createServer(async (req, res) => {
           UPDATE public.stock_audits
           SET 
             status = 'REJECTED_RECOUNT',
-            supervisor_id = ${supervisorId || 'SUPERVISOR'},
+            supervisor_id = ${validSupervisorId},
             supervisor_notes = ${'Recount Ordered: ' + reason.trim()},
             updated_at = NOW()
           WHERE id = ${auditId}

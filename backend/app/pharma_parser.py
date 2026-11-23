@@ -109,43 +109,6 @@ class PharmaEntityExtractor:
         n = len(all_lines_text)
         combined_upper = full_text.upper()
 
-        # Direct Recognition for the 5 Real Packaging Images
-        if any(k in combined_upper for k in ['CALPOL', 'OPTIZORB', 'GLAXOSMITHKLINE', '62000000089737', 'PARACETAMOL TABLETS IP 650']):
-            extracted_name = 'Calpol 650 Tablets'
-            extracted_sku = 'MED-CALP-650'
-            extracted_batch = 'BTH-CALP-2601'
-            extracted_expiry = '10/2028'
-            extracted_mfg = '04/2026'
-            extracted_mrp = 30.0
-        elif any(k in combined_upper for k in ['CLARIBID', 'CLARITHROMYCIN', 'ABBOTT', '8901117245102', 'TARAPUR']):
-            extracted_name = 'Claribid 500 Tablets'
-            extracted_sku = 'MED-CLAR-500'
-            extracted_batch = 'BTH-CLAR-4091'
-            extracted_expiry = '08/2027'
-            extracted_mfg = '02/2026'
-            extracted_mrp = 350.0
-        elif any(k in combined_upper for k in ['AZITHROMYCIN', 'PRECISIONDOSE', '00368094900188', '68094-900', '4242407041', '331703202318']):
-            extracted_name = 'Azithromycin Tablets USP 250mg'
-            extracted_sku = 'MED-AZIT-250'
-            extracted_batch = '4242407041'
-            extracted_expiry = '07/2027'
-            extracted_mfg = '07/2025'
-            extracted_mrp = 180.0
-        elif any(k in combined_upper for k in ['AMLOKIND', 'AMLODIPINE', 'MANKIND', '8904103311105', 'MEDFORCE']):
-            extracted_name = 'Amlokind 5 Tablets'
-            extracted_sku = 'MED-AMLO-005'
-            extracted_batch = 'BTH-AMLO-5510'
-            extracted_expiry = '09/2028'
-            extracted_mfg = '03/2026'
-            extracted_mrp = 45.0
-        elif any(k in combined_upper for k in ['ACTICLATE', 'DOXYCYCLINE', 'ALMIRALL', 'CATALENT', '16110-502', '316110502014']):
-            extracted_name = 'Acticlate 150mg Tablets'
-            extracted_sku = 'MED-ACTI-150'
-            extracted_batch = 'BTH-ACTI-7812'
-            extracted_expiry = '06/2029'
-            extracted_mfg = '06/2026'
-            extracted_mrp = 520.0
-
         def get_lookahead_tokens(start_idx: int, max_depth: int = 4) -> List[str]:
             tokens = []
             for k in range(start_idx, min(n, start_idx + max_depth)):

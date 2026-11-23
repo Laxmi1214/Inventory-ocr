@@ -185,11 +185,20 @@ export default function ValidationScreen({
     const scannedBatch = editBatch.trim().toUpperCase();
     let isBatchMatch = false;
 
-    if (!expectedBatch || expectedBatch === 'ANY') {
-      // If PO has no strict batch pre-assigned, any valid batch is accepted
-      isBatchMatch = scannedBatch.length > 0;
+    if (!isPickMode) {
+      // Inbound Receiving: Suppliers deliver newly manufactured batches; accept any valid batch if PO is open
+      if (!expectedBatch || expectedBatch === 'ANY' || expectedBatch.startsWith('BATCH-REC')) {
+        isBatchMatch = scannedBatch.length > 0;
+      } else {
+        isBatchMatch = scannedBatch === expectedBatch;
+      }
     } else {
-      isBatchMatch = scannedBatch === expectedBatch;
+      // Outbound Pick & Pack: Strict batch verification for FEFO (First Expiry First Out) compliance
+      if (!expectedBatch || expectedBatch === 'ANY') {
+        isBatchMatch = scannedBatch.length > 0;
+      } else {
+        isBatchMatch = scannedBatch === expectedBatch;
+      }
     }
 
     if (!isBatchMatch) {
