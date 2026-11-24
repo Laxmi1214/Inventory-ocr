@@ -48,7 +48,7 @@ export interface StockAuditHistoryItem {
   countedByUser?: string;
 }
 
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.45:8080';
 const STORAGE_AUDIT_FALLBACK_KEY = '@congiotech_audit_tasks_cache_v1';
 const STORAGE_AUDIT_HISTORY_KEY = '@congiotech_audit_history_v1';
 

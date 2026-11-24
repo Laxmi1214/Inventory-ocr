@@ -1,4 +1,13 @@
+import sys
+import os
+import pathlib
 import base64
+
+# Ensure parent backend directory is dynamically present in sys.path
+_backend_dir = str(pathlib.Path(__file__).resolve().parent.parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 from fastapi import FastAPI, File, UploadFile, Header, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -123,4 +132,4 @@ async def scan_medicine_base64(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8001, app_dir=_backend_dir, reload=False)

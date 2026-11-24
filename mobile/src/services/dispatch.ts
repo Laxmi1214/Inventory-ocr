@@ -24,7 +24,7 @@ export interface OutboundOrder {
 }
 
 const STORAGE_ORDERS_KEY = '@congiotech_outbound_orders_v2';
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.45:8080';
 
 // Fallback seed customer orders matching the 5 Real Master Medicines
 export const SEED_OUTBOUND_ORDERS: OutboundOrder[] = [

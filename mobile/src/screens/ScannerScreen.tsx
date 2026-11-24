@@ -237,7 +237,7 @@ export default function ScannerScreen({
       Alert.alert(
         'OCR Microservice Notice',
         isConnectionError
-          ? `Backend OCR server unreachable (${targetCode ? `Order ${targetCode}` : 'at 192.168.1.49:8080'}).\n\nMake sure 'node backend/bridge.js' is running on your PC.\n\nWould you like to auto-fill expected medicine details or enter manually?`
+          ? `Backend OCR server unreachable (${targetCode ? `Order ${targetCode}` : 'at 192.168.1.45:8080'}).\n\nMake sure 'node backend/bridge.js' is running on your PC.\n\nWould you like to auto-fill expected medicine details or enter manually?`
           : (err.message || 'Failed to process image with OCR microservice.'),
         [
           {

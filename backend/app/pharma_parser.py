@@ -21,7 +21,8 @@ METADATA_LINE_KEYWORDS = {
     'BATCH', 'LOT', 'B.NO', 'B/NO', 'BN:', 'EXP', 'MFG', 'MFD', 'PKD',
     'PACKED', 'MRP', 'PRICE', 'RATE', 'RS.', 'INR', 'SKU', 'PO NO',
     'PURCHASE ORDER', 'NET QTY', 'MFG. BY', 'MKT BY', 'LIC NO', 'DOSAGE',
-    'SCHEDULE H', 'FOR EXTERNAL', 'SHAKE WELL', 'KEEP OUT'
+    'SCHEDULE H', 'FOR EXTERNAL', 'SHAKE WELL', 'KEEP OUT', 'PER 10', 'PER 15',
+    'PER TAB', 'INCL. OF', 'INCL OF', 'TAXES'
 }
 
 def is_noise_text(text: str) -> bool:
@@ -61,9 +62,9 @@ class PharmaEntityExtractor:
     """
 
     # Comprehensive Medicine Brand + Strength / Dosage Regex
-    # Matches: Dolo 650, Augmentin 625 Duo, Azithral 500, Pantocid 40 mg, Betadine Ointment 20g, Pan-D, etc.
+    # Matches: Dolo 650, Augmentin 625 Duo, Azithral 500, Swimol-650, Pantocid 40 mg, Betadine Ointment 20g, Pan-D, etc.
     STRENGTH_REGEX = re.compile(
-        r'\b([A-Za-z0-9\-+&]{2,}(?:\s+[A-Za-z0-9\-+&]+)*\s+[0-9]+(?:\.[0-9]+)?\s*(?:mg|ml|gm|g|mcg|iu|%|tablets?|capsules?|suspension|syrup|injection|ointment|gel|drops|solution|duo|ds|dt|sr|xr|forte|plus)?(?:\s+(?:tablets?|capsules?|suspension|syrup|injection|ointment|gel|drops|solution|duo|ds|dt|sr|xr|forte|plus|ip|bp|usp))?)\b',
+        r'\b([A-Za-z0-9\-+&]{2,}(?:\s+[A-Za-z0-9\-+&]+)*(?:[\s\-]+[0-9]+(?:\.[0-9]+)?)\s*(?:mg|ml|gm|g|mcg|iu|%|tablets?|capsules?|suspension|syrup|injection|ointment|gel|drops|solution|duo|ds|dt|sr|xr|forte|plus)?(?:\s+(?:tablets?|capsules?|suspension|syrup|injection|ointment|gel|drops|solution|duo|ds|dt|sr|xr|forte|plus|ip|bp|usp))?)\b',
         re.IGNORECASE
     )
 
@@ -272,14 +273,18 @@ class PharmaEntityExtractor:
             for line in all_lines_text:
                 if is_noise_text(line) or is_metadata_line(line):
                     continue
+                if line.strip().upper().startswith(('PER ', 'INCL', 'M.R.P', 'FOR ', 'TAX', 'PRIC', 'RATE')):
+                    continue
                 st_m = cls.STRENGTH_REGEX.search(line)
-                if st_m:
+                if st_m and not st_m.group(1).upper().startswith(('PER ', 'INCL', 'TAX', 'M.R.P', 'PRIC', 'RATE')):
                     extracted_name = st_m.group(1).strip()
                     break
 
         if not extracted_name:
             for line in all_lines_text:
                 if is_noise_text(line) or is_metadata_line(line):
+                    continue
+                if line.strip().upper().startswith(('PER ', 'INCL', 'M.R.P', 'FOR ', 'TAX', 'PRIC', 'RATE')):
                     continue
                 # If line is 3-40 chars and looks like a brand/drug name
                 clean = line.strip()

@@ -1,71 +1,68 @@
 import os
 import io
 import pathlib
+import threading
 import numpy as np
-import torch
 from PIL import Image
 from typing import List, Dict, Any
 
-# Ensure cache and home directories are strictly inside the backend folder
-CACHE_DIR = r"D:\Inventory-ocr\backend\cache"
-os.environ["USERPROFILE"] = CACHE_DIR
-os.environ["HOME"] = CACHE_DIR
-os.environ["MPLCONFIGDIR"] = os.path.join(CACHE_DIR, "mpl")
-os.makedirs(os.path.join(CACHE_DIR, "mpl"), exist_ok=True)
-pathlib.Path.home = lambda: pathlib.Path(CACHE_DIR)
+# Disable online model check and Pir/MKLDNN issues on Windows PaddlePaddle 3.x
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["FLAGS_enable_pir_api"] = "0"
+os.environ["FLAGS_enable_pir_in_executor"] = "0"
 
-# Optimize PyTorch CPU Multi-threading for maximum inference throughput
+# Optional PyTorch multi-threading optimization if torch is installed
 try:
+    import torch
     cpu_cores = os.cpu_count() or 4
     torch.set_num_threads(max(1, cpu_cores - 1))
 except Exception:
     pass
 
-# Global singleton OCR engine instance
+# Global singleton OCR engine instance and thread synchronization lock
 _ocr_instance = None
+_ocr_lock = threading.Lock()
 
 def get_ocr_engine():
     """
-    Lazy singleton initialization of OCR engine.
-    Uses local offline deep-learning OCR weights in CACHE_DIR.
+    Lazy singleton initialization of PaddleOCR 3.x engine.
+    Uses local offline deep-learning weights.
     Zero-cloud, zero-disk retention for utmost pharma confidentiality.
     """
     global _ocr_instance
     if _ocr_instance is None:
         try:
-            import easyocr
-            easyocr_model_dir = os.path.join(CACHE_DIR, "easyocr")
-            os.makedirs(easyocr_model_dir, exist_ok=True)
-            _ocr_instance = easyocr.Reader(
-                ['en'],
-                gpu=False,
-                model_storage_directory=easyocr_model_dir,
-                user_network_directory=easyocr_model_dir,
-                download_enabled=False,
-                verbose=False
+            from paddleocr import PaddleOCR
+            _ocr_instance = PaddleOCR(
+                ocr_version="PP-OCRv4",
+                lang="en",
+                enable_mkldnn=False,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
             )
-            print("[OCR ENGINE] High-Speed EasyOCR Reader initialized successfully with local weights!")
+            print("[OCR ENGINE] PaddleOCR 3.x (PP-OCRv4) engine initialized successfully!")
         except Exception as e:
-            print(f"[OCR ENGINE INITIALIZATION ERROR]: {e}")
-            _ocr_instance = None
+            print(f"[OCR ENGINE PADDLEOCR INITIALIZATION ERROR]: {e}")
+            try:
+                import easyocr
+                _ocr_instance = easyocr.Reader(['en'], gpu=False, download_enabled=False, verbose=False)
+                print("[OCR ENGINE] EasyOCR fallback initialized successfully!")
+            except Exception as e2:
+                print(f"[OCR ENGINE FALLBACK ERROR]: {e2}")
+                _ocr_instance = None
     return _ocr_instance
 
 def run_paddle_ocr(image_bytes: bytes) -> List[Dict[str, Any]]:
     """
-    High-Speed Pharmaceutical OCR on in-memory image bytes.
-    Optimized for sub-second / minimal response time:
-      - Auto-scales gigantic mobile camera photos (12-48MP) to 1080px max dimension.
-      - Uses multi-core PyTorch vectorized batch execution.
-      - Zero-disk retention: image bytes exist only in RAM during execution and are discarded.
-      - NO STATIC FALLBACK TEXT: returns exactly what is detected on the packaging.
+    High-Speed Pharmaceutical OCR on in-memory image bytes using PaddleOCR.
+    Thread-safe execution with zero-disk retention.
+    NO STATIC FALLBACK TEXT: returns exactly what is detected on the packaging.
     """
     try:
         pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        
-        # High-Speed Auto-Resize for mobile camera captures
-        # Reduces processing time from 30+ seconds to ~2-4 seconds with zero loss of accuracy
         w, h = pil_image.size
-        max_dim = 1080
+        max_dim = 1440
         if max(w, h) > max_dim:
             scale = max_dim / float(max(w, h))
             new_w, new_h = int(w * scale), int(h * scale)
@@ -79,28 +76,64 @@ def run_paddle_ocr(image_bytes: bytes) -> List[Dict[str, Any]]:
     engine = get_ocr_engine()
     results: List[Dict[str, Any]] = []
 
-    if engine is not None:
+    if engine is None:
+        return results
+
+    # Thread-safe prediction: prevent concurrent C++ memory access violations on Windows
+    with _ocr_lock:
         try:
-            # Batch size 8 + canvas size 1080 for ultra-fast CRAFT detection & CRNN recognition
-            raw_detections = engine.readtext(
-                np_image,
-                canvas_size=1080,
-                batch_size=8,
-                workers=0,
-                detail=1
-            )
-            for item in raw_detections:
-                if len(item) >= 3:
-                    box = item[0]
-                    text = str(item[1]).strip()
-                    conf = float(item[2])
-                    if text:
-                        results.append({
-                            "text": text,
-                            "confidence": round(conf, 3),
-                            "box": box if isinstance(box, list) else (box.tolist() if hasattr(box, "tolist") else [])
-                        })
-            return results
+            # 1. Try PaddleOCR predict API (PaddleOCR 3.x / Paddlex)
+            if hasattr(engine, "predict"):
+                predictions = list(engine.predict(np_image))
+                for page in predictions:
+                    if isinstance(page, dict):
+                        rec_texts = page.get("rec_texts", [])
+                        rec_scores = page.get("rec_scores", [])
+                        rec_polys = page.get("rec_polys", page.get("dt_polys", []))
+                        for idx, text in enumerate(rec_texts):
+                            t = str(text).strip()
+                            if t:
+                                score = float(rec_scores[idx]) if idx < len(rec_scores) else 0.95
+                                poly = rec_polys[idx] if idx < len(rec_polys) else []
+                                box = poly.tolist() if hasattr(poly, "tolist") else (list(poly) if isinstance(poly, (list, tuple)) else [])
+                                results.append({
+                                    "text": t,
+                                    "confidence": round(score, 3),
+                                    "box": box
+                                })
+                    elif isinstance(page, list):
+                        for item in page:
+                            if isinstance(item, list) and len(item) == 2:
+                                box = item[0]
+                                text_tuple = item[1]
+                                if isinstance(text_tuple, (tuple, list)) and len(text_tuple) >= 2:
+                                    t = str(text_tuple[0]).strip()
+                                    s = float(text_tuple[1])
+                                    if t:
+                                        results.append({
+                                            "text": t,
+                                            "confidence": round(s, 3),
+                                            "box": box.tolist() if hasattr(box, "tolist") else list(box)
+                                        })
+                if results:
+                    return results
+
+            # 2. Try EasyOCR readtext API (if fallback was loaded)
+            if hasattr(engine, "readtext"):
+                raw_detections = engine.readtext(np_image, canvas_size=1080, batch_size=8, workers=0, detail=1)
+                for item in raw_detections:
+                    if len(item) >= 3:
+                        box = item[0]
+                        text = str(item[1]).strip()
+                        conf = float(item[2])
+                        if text:
+                            results.append({
+                                "text": text,
+                                "confidence": round(conf, 3),
+                                "box": box if isinstance(box, list) else (box.tolist() if hasattr(box, "tolist") else [])
+                            })
+                return results
+
         except Exception as err:
             print(f"[OCR INFERENCE ERROR]: {err}")
             return []

@@ -42,24 +42,45 @@ const PYTHON_EXE = fs.existsSync(localVenvPython) ? localVenvPython : (fs.exists
 let pythonProc = null;
 
 function startPythonOcrService() {
-  console.log('[NODE BRIDGE] Spawning Python OCR service (FastAPI / EasyOCR)...');
-  pythonProc = spawn(PYTHON_EXE, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(PYTHON_TARGET_PORT)], {
-    cwd: __dirname,
-    env: { ...process.env, PYTHONUNBUFFERED: '1' }
+  const http = require('http');
+  const checkReq = http.get(`http://127.0.0.1:${PYTHON_TARGET_PORT}/health`, (res) => {
+    if (res.statusCode === 200) {
+      console.log(`[NODE BRIDGE] Python OCR service is already active and healthy on port ${PYTHON_TARGET_PORT}.`);
+      return;
+    }
+    spawnOcr();
+  });
+  checkReq.on('error', () => {
+    spawnOcr();
   });
 
-  pythonProc.stdout.on('data', (data) => {
-    console.log(`[PYTHON OCR] ${data.toString().trim()}`);
-  });
+  function spawnOcr() {
+    console.log('[NODE BRIDGE] Spawning Python OCR service (FastAPI / PaddleOCR)...');
+    pythonProc = spawn(PYTHON_EXE, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(PYTHON_TARGET_PORT)], {
+      cwd: __dirname,
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK: 'True',
+        FLAGS_use_mkldnn: '0',
+        FLAGS_enable_pir_api: '0',
+        FLAGS_enable_pir_in_executor: '0'
+      }
+    });
 
-  pythonProc.stderr.on('data', (data) => {
-    console.log(`[PYTHON OCR] ${data.toString().trim()}`);
-  });
+    pythonProc.stdout.on('data', (data) => {
+      console.log(`[PYTHON OCR] ${data.toString().trim()}`);
+    });
 
-  pythonProc.on('close', (code) => {
-    console.log(`[PYTHON OCR] Process exited with code ${code}. Restarting in 2s...`);
-    setTimeout(startPythonOcrService, 2000);
-  });
+    pythonProc.stderr.on('data', (data) => {
+      console.log(`[PYTHON OCR] ${data.toString().trim()}`);
+    });
+
+    pythonProc.on('close', (code) => {
+      console.log(`[PYTHON OCR] Process exited with code ${code}. Restarting in 2s...`);
+      setTimeout(startPythonOcrService, 2000);
+    });
+  }
 }
 
 // Start Python OCR microservice
@@ -478,7 +499,7 @@ const server = http.createServer(async (req, res) => {
   // -------------------------------------------------------------
   // Route 3: Get All Users from PostgreSQL Database
   // -------------------------------------------------------------
-  if (req.method === 'GET' && urlPath === '/api/v1/auth/users') {
+  if (req.method === 'GET' && (urlPath === '/api/v1/auth/users' || urlPath === '/api/v1/users')) {
     try {
       if (!sql) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -560,7 +581,7 @@ const server = http.createServer(async (req, res) => {
   // -------------------------------------------------------------
   // Route 4.5: Get All Outbound Customer Orders (Pick & Pack) from DB
   // -------------------------------------------------------------
-  if (req.method === 'GET' && (urlPath === '/api/v1/orders' || urlPath === '/api/v1/picking/orders')) {
+  if (req.method === 'GET' && (urlPath === '/api/v1/orders' || urlPath === '/api/v1/picking/orders' || urlPath === '/api/v1/dispatch/orders')) {
     try {
       if (!sql) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1171,7 +1192,7 @@ const server = http.createServer(async (req, res) => {
   // -------------------------------------------------------------
   // Route 6.1: Workflow 3 - Get Real Inventory Items for Stock Audit
   // -------------------------------------------------------------
-  if (req.method === 'GET' && urlPath === '/api/v1/audit/tasks') {
+  if (req.method === 'GET' && (urlPath === '/api/v1/audit/tasks' || urlPath === '/api/v1/supervisor/audit-tasks')) {
     try {
       if (!sql) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -1331,7 +1352,7 @@ const server = http.createServer(async (req, res) => {
   // -------------------------------------------------------------
   // Route 6.3: Workflow 3 - Get Stock Audit History & Pending Approvals
   // -------------------------------------------------------------
-  if (req.method === 'GET' && urlPath === '/api/v1/audit/history') {
+  if (req.method === 'GET' && (urlPath === '/api/v1/audit/history' || urlPath === '/api/v1/supervisor/audit-history')) {
     try {
       if (!sql) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -1795,7 +1816,7 @@ const server = http.createServer(async (req, res) => {
  // -------------------------------------------------------------
   // Route 6.7: Master Data - Get Complete Catalog (Products, Batches, Inventory Locations)
   // -------------------------------------------------------------
-  if (req.method === 'GET' && urlPath === '/api/v1/master-data/summary') {
+  if (req.method === 'GET' && (urlPath === '/api/v1/master-data/summary' || urlPath === '/api/v1/admin/master-data/summary')) {
     try {
       if (!sql) {
         res.writeHead(500, { 'Content-Type': 'application/json' });

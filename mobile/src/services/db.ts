@@ -20,7 +20,7 @@ export interface UserSession {
 
 const STORAGE_USERS_KEY = '@congiotech_users_table_v1';
 const STORAGE_SESSION_KEY = '@congiotech_active_session_v1';
-const AUTH_API_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+const AUTH_API_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.45:8080';
 
 // In-memory fallback map for environments without native AsyncStorage
 const inMemoryStore = new Map<string, string>();

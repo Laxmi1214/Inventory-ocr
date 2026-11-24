@@ -167,7 +167,7 @@ const FALLBACK_SHIPMENTS: InboundShipmentWithItems[] = [
   },
 ];
 
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.45:8080';
 
 /**
  * Flag a PO or Item as DISCREPANCY in PostgreSQL Database

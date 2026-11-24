@@ -1,6 +1,6 @@
 import { safeStorage, UserRecord, RegisterUserInput } from './db';
 
-const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.49:8080';
+const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.45:8080';
 const STORAGE_STAFF_CACHE = '@congiotech_staff_users_cache_v1';
 
 export interface StaffUser {
