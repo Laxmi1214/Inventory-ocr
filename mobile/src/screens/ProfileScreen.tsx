@@ -375,56 +375,6 @@ export default function ProfileScreen({
           </TouchableOpacity>
         </View>
 
-        {/* Section 3: System & Compliance Information */}
-        <Text style={styles.sectionHeader}>System & Compliance Status</Text>
-        <View style={styles.infoCard}>
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconWrapper}>
-              <Ionicons name="checkmark-done-circle-outline" size={18} color="#10B981" />
-            </View>
-            <View style={styles.infoTextCol}>
-              <Text style={styles.infoLabel}>Good Distribution Practice (GDP)</Text>
-              <Text style={styles.infoValue}>Certified & Compliant</Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconWrapper}>
-              <Ionicons name="server-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.infoTextCol}>
-              <Text style={styles.infoLabel}>Database Engine</Text>
-              <Text style={styles.infoValue}>PostgreSQL on Supabase Cloud Pooler</Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconWrapper}>
-              <Ionicons name="hardware-chip-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.infoTextCol}>
-              <Text style={styles.infoLabel}>OCR Microservice</Text>
-              <Text style={styles.infoValue}>FastAPI / EasyOCR Deep Neural Network</Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconWrapper}>
-              <Ionicons name="information-circle-outline" size={18} color="#94A3B8" />
-            </View>
-            <View style={styles.infoTextCol}>
-              <Text style={styles.infoLabel}>Application Version</Text>
-              <Text style={styles.infoValue}>v2.4.0 (Pharmaceutical OCR Suite)</Text>
-            </View>
-          </View>
-        </View>
-
         {/* Section 4: Sign Out Button */}
         <TouchableOpacity
           style={styles.logoutButtonLarge}
