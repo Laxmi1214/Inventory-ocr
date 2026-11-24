@@ -206,7 +206,7 @@ export default function ReceivingPOScreen({ onBack, onSelectPO }: ReceivingPOScr
               <Text style={styles.emptyTitle}>No Inbound Shipments Found</Text>
               <Text style={styles.emptySubtitle}>
                 {searchQuery
-                  ? `No orders match "${searchQuery}". Try a different search term.`
+                  ? `No orders match "${searchQuery}".\n\n👉 Tip: Search by PO Number (e.g. "PO-2026-0891") or Supplier name (e.g. "Cipla", "Abbott").`
                   : 'There are currently no purchase orders matching this filter.'}
               </Text>
             </View>
