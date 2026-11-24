@@ -15,4 +15,5 @@ os.environ["FLAGS_enable_pir_in_executor"] = "0"
 import uvicorn
 
 if __name__ == '__main__':
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8001, app_dir=backend_dir, log_level="info")
+    # Listen on 0.0.0.0 so mobile devices and emulator can connect
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8001, app_dir=backend_dir, log_level="info")

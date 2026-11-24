@@ -19,14 +19,14 @@ export interface ExtractedLabelData {
   rawText?: string;
 }
 
-// 5 Real Pharmaceutical Master Medicines Catalog
+// 6 Real Pharmaceutical Master Medicines Catalog
 export const REAL_MASTER_MEDICINES = [
   {
     name: 'Calpol 650 Tablets',
     sku: 'MED-CALP-650',
     productId: '62000000089737',
-    barcodes: ['62000000089737', 'MED-CALP-650', '62000000', '89737'],
-    keywords: ['CALPOL', 'OPTIZORB', 'GLAXOSMITHKLINE', 'GSK', 'PARACETAMOL', '62000000089737'],
+    barcodes: ['62000000089737', 'MED-CALP-650'],
+    keywords: ['CALPOL', 'OPTIZORB', 'GLAXOSMITHKLINE', 'GSK', 'PARACETAMOL'],
     batchNumber: 'BTH-CALP-2601',
     expiryDate: '10/2028',
     mfgDate: '04/2026',
@@ -42,8 +42,8 @@ export const REAL_MASTER_MEDICINES = [
     name: 'Claribid 500 Tablets',
     sku: 'MED-CLAR-500',
     productId: '8901117245102',
-    barcodes: ['8901117245102', '08901117245102', 'MED-CLAR-500', '1117245102'],
-    keywords: ['CLARIBID', 'CLARITHROMYCIN', 'ABBOTT', 'TARAPUR', '8901117245102'],
+    barcodes: ['8901117245102', '08901117245102', 'MED-CLAR-500'],
+    keywords: ['CLARIBID', 'CLARITHROMYCIN', 'CONTHROMYEIN', 'ABBOTT', 'TARAPUR'],
     batchNumber: 'BTH-CLAR-4091',
     expiryDate: '08/2027',
     mfgDate: '02/2026',
@@ -56,11 +56,11 @@ export const REAL_MASTER_MEDICINES = [
     hospital: 'Fortis Healthcare - Pediatric Wing',
   },
   {
-    name: 'Azithromycin Tablets USP 250mg',
+    name: 'Azithromycin Tablets, USP 250 mg',
     sku: 'MED-AZIT-250',
     productId: '00368094900188',
     barcodes: ['00368094900188', '0368094900188', '368094900188', '331703202318', '4242407041', '6809490018', '68094-900-18', 'MED-AZIT-250'],
-    keywords: ['AZITHROMYCIN', 'PRECISIONDOSE', 'CSPC', '00368094900188', '331703202318', '4242407041', '68094'],
+    keywords: ['AZITHROMYCIN', 'PRECISIONDOSE', 'CSPC', '68094-900-18', '68094'],
     batchNumber: '4242407041',
     expiryDate: '07/2027',
     mfgDate: '07/2025',
@@ -76,8 +76,8 @@ export const REAL_MASTER_MEDICINES = [
     name: 'Amlokind 5 Tablets',
     sku: 'MED-AMLO-005',
     productId: '8904103311105',
-    barcodes: ['8904103311105', '08904103311105', 'MED-AMLO-005', '4103311105'],
-    keywords: ['AMLOKIND', 'AMLODIPINE', 'MANKIND', 'MEDFORCE', '8904103311105'],
+    barcodes: ['8904103311105', '08904103311105', 'MED-AMLO-005'],
+    keywords: ['AMLOKIND', 'AMLODIPINE', 'MANKIND', 'MEDFORCE'],
     batchNumber: 'BTH-AMLO-5510',
     expiryDate: '09/2028',
     mfgDate: '03/2026',
@@ -94,7 +94,7 @@ export const REAL_MASTER_MEDICINES = [
     sku: 'MED-ACTI-150',
     productId: '316110502014',
     barcodes: ['316110502014', '0316110502014', '1611050201', '16110502014', '16110-502-01', '16110-502', 'MED-ACTI-150'],
-    keywords: ['ACTICLATE', 'DOXYCYCLINE', 'ALMIRALL', 'CATALENT', '16110-502', '316110502014'],
+    keywords: ['ACTICLATE', '16110-502-01', '16110-502', '316110502014', 'ALMIRALL', 'CATALENT'],
     batchNumber: 'BTH-ACTI-7812',
     expiryDate: '06/2029',
     mfgDate: '06/2026',
@@ -106,10 +106,27 @@ export const REAL_MASTER_MEDICINES = [
     orderNumber: 'ORD-2026-4416',
     hospital: 'Kauvery Hospital - Emergency Ward',
   },
+  {
+    name: 'Doxycycline Hyclate Capsules, USP 50 mg',
+    sku: 'MED-DOXY-050',
+    productId: '00362135984052',
+    barcodes: ['00362135984052', '62135984052', '62135-984-05', '6213598405', 'MED-DOXY-050'],
+    keywords: ['CHARTWELL', '62135-984-05', '62135-984', '62135984052', 'DOXYCYCLINE HYCLATE CAPSULES', '500 CAPSULES'],
+    batchNumber: 'BTH-DOXY-5098',
+    expiryDate: '05/2028',
+    mfgDate: '05/2025',
+    price: 240,
+    unit: 'BOTTLE',
+    packSize: 'Bottle of 500 Capsules',
+    supplier: 'Chartwell Pharmaceuticals LLC',
+    poNumber: 'PO-2026-0896',
+    orderNumber: 'ORD-2026-4417',
+    hospital: 'Apollo Hospitals - Central Pharmacy',
+  },
 ];
 
 /**
- * Universal matcher for the 5 Real Pharmaceutical Master Medicines
+ * Universal matcher for the 6 Real Pharmaceutical Master Medicines
  */
 export function matchPharmaMasterMedicine(codeOrText?: string) {
   if (!codeOrText) return null;
@@ -117,31 +134,53 @@ export function matchPharmaMasterMedicine(codeOrText?: string) {
   const upper = clean.toUpperCase();
   const digits = clean.replace(/\D/g, '');
 
+  // 1. Direct match on exact barcode / productId
   for (const m of REAL_MASTER_MEDICINES) {
-    // 1. Direct match on brand name keyword
-    const brandKeyword = m.name.toUpperCase().split(' ')[0]; // 'CALPOL', 'CLARIBID', 'AZITHROMYCIN', 'AMLOKIND', 'ACTICLATE'
-    if (upper.includes(brandKeyword)) return m;
-
-    // 2. Direct match on SKU
-    if (upper.includes(m.sku.toUpperCase())) return m;
-
-    // 3. Direct match on productId
-    if (m.productId && (upper.includes(m.productId.toUpperCase()) || clean === m.productId)) return m;
-
-    // 4. Barcodes and numbers
+    if (m.productId && clean === m.productId) return m;
     for (const b of m.barcodes) {
-      if (upper.includes(b.toUpperCase()) || clean === b) return m;
-      const bDigits = b.replace(/\D/g, '');
-      if (bDigits.length >= 6 && digits.length >= 6 && (digits.includes(bDigits) || bDigits.includes(digits))) {
+      if (clean === b) return m;
+    }
+  }
+
+  // 2. Direct match on brand name keyword / SKU
+  for (const m of REAL_MASTER_MEDICINES) {
+    if (upper.includes(m.sku.toUpperCase())) return m;
+    const brandKeyword = m.name.toUpperCase().split(' ')[0]; // 'CALPOL', 'CLARIBID', 'AZITHROMYCIN', 'AMLOKIND', 'ACTICLATE', 'DOXYCYCLINE'
+    if (upper.includes(brandKeyword)) {
+      if (brandKeyword === 'DOXYCYCLINE') {
+        if (upper.includes('150') || upper.includes('ACTICLATE') || upper.includes('16110')) {
+          if (m.sku === 'MED-ACTI-150') return m;
+        } else {
+          if (m.sku === 'MED-DOXY-050') return m;
+        }
+      } else {
         return m;
       }
     }
+  }
 
-    // 5. Packaging keywords
+  // 3. Packaging keywords
+  for (const m of REAL_MASTER_MEDICINES) {
     if (m.keywords && m.keywords.some((k) => upper.includes(k.toUpperCase()))) {
+      if (m.sku === 'MED-ACTI-150' && (upper.includes('CHARTWELL') || upper.includes('62135') || upper.includes('50 MG'))) {
+        continue;
+      }
       return m;
     }
   }
+
+  // 4. Exact barcode digit matches (minimum 8 digits to prevent accidental collisions)
+  if (digits.length >= 8) {
+    for (const m of REAL_MASTER_MEDICINES) {
+      for (const b of m.barcodes) {
+        const bDigits = b.replace(/\D/g, '');
+        if (bDigits.length >= 8 && (digits.includes(bDigits) || bDigits.includes(digits))) {
+          return m;
+        }
+      }
+    }
+  }
+
   return null;
 }
 

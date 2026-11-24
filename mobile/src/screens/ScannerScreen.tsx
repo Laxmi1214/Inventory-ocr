@@ -122,22 +122,20 @@ export default function ScannerScreen({
     isBusyRef.current = true;
     const decoded = decodePharmaBarcode(data, type);
     const matchedMaster = matchPharmaMasterMedicine(decoded.barcode || decoded.sku || decoded.productName || data);
-    const matchedPoItem = findMatchingPoItem(decoded.barcode || decoded.sku || decoded.productName || data);
 
     setScanSource(decoded.source === 'QR_CODE' ? 'QR_CODE' : 'BARCODE');
     setRawCode(data);
 
-    // Dynamic resolution: strictly match against scanned physical item, NEVER auto-assume quantity
+    // Dynamic resolution: strictly match against scanned physical item, NEVER auto-assume quantity or PO item
     const resolvedName =
       decoded.productName ||
       matchedMaster?.name ||
-      matchedPoItem?.product?.name ||
       (data ? `Scanned (${data.substring(0, 16)})` : '');
-    const resolvedSku = decoded.sku || matchedMaster?.sku || matchedPoItem?.product?.sku || '';
-    const resolvedBatch = decoded.batchNumber || '';
-    const resolvedMfg = decoded.mfgDate || '';
-    const resolvedExpiry = decoded.expiryDate || '';
-    const resolvedPrice = decoded.price ? decoded.price.toString() : '';
+    const resolvedSku = decoded.sku || matchedMaster?.sku || '';
+    const resolvedBatch = decoded.batchNumber || matchedMaster?.batchNumber || '';
+    const resolvedMfg = decoded.mfgDate || matchedMaster?.mfgDate || '';
+    const resolvedExpiry = decoded.expiryDate || matchedMaster?.expiryDate || '';
+    const resolvedPrice = decoded.price ? decoded.price.toString() : (matchedMaster?.price ? matchedMaster.price.toString() : '');
     const resolvedQty = '';
 
     setProductName(resolvedName);
@@ -202,9 +200,8 @@ export default function ScannerScreen({
         return;
       }
 
-      const combinedOcrText = [ocrData.medicineName, ocrData.sku, ocrData.rawText].filter(Boolean).join(' ');
+      const combinedOcrText = [ocrData.medicineName, ocrData.sku, ocrData.rawText, ...(ocrData.allLines || [])].filter(Boolean).join(' ');
       const matchedMaster = matchPharmaMasterMedicine(combinedOcrText);
-      const matchedPoItem = findMatchingPoItem(ocrData.medicineName || ocrData.sku || ocrData.rawText || '');
 
       setScanSource('OCR');
       setRawCode('');
@@ -213,12 +210,12 @@ export default function ScannerScreen({
       }
 
       const detectedName = ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' && ocrData.medicineName !== 'No text detected' ? ocrData.medicineName : '';
-      const finalName = detectedName || matchedPoItem?.product?.name || (ocrData.allLines?.[0] || '');
-      const finalSku = ocrData.sku || matchedPoItem?.product?.sku || '';
-      const finalBatch = ocrData.batchNumber || '';
-      const finalMfg = ocrData.mfgDate || '';
-      const finalExp = ocrData.expiryDate || '';
-      const finalPrice = ocrData.mrp ? ocrData.mrp.toString() : '';
+      const finalName = matchedMaster?.name || detectedName || (ocrData.allLines?.[0] || '');
+      const finalSku = matchedMaster?.sku || ocrData.sku || '';
+      const finalBatch = ocrData.batchNumber || matchedMaster?.batchNumber || '';
+      const finalMfg = ocrData.mfgDate || matchedMaster?.mfgDate || '';
+      const finalExp = ocrData.expiryDate || matchedMaster?.expiryDate || '';
+      const finalPrice = ocrData.mrp ? ocrData.mrp.toString() : (matchedMaster?.price ? matchedMaster.price.toString() : '');
       const finalQty = '';
 
       setProductName(finalName);
@@ -242,21 +239,9 @@ export default function ScannerScreen({
       Alert.alert(
         'Server Connection Guidance',
         isConnectionError
-          ? `Cannot reach warehouse server (192.168.1.45:8080).\n\n👉 Instructions to reconnect:\n1. Ensure phone & PC are on the same Wi-Fi.\n2. In PC terminal, run: node backend/bridge.js\n\nYou can also enter details manually to keep working without interruption.`
-          : `OCR Assistance: ${err?.message || 'Processing timed out.'}\n\n👉 Tip: Hold packaging steady and try capturing again.`,
+          ? `Backend OCR server unreachable (${targetCode ? `Order ${targetCode}` : 'at 192.168.1.45:8080'}).\n\nMake sure 'node backend/bridge.js' is running on your PC.\n\nWould you like to auto-fill expected medicine details or enter manually?`
+          : (err.message || 'Failed to process image with OCR microservice.'),
         [
-          {
-            text: 'Auto-fill Expected Item',
-            onPress: () => {
-              const expected = primaryItem;
-              setScanSource('OCR');
-              setProductName(expected?.name || '');
-              setSku(expected?.sku || '');
-              setBatchNumber(defaultExpectedBatch || '');
-              setQuantity('');
-              setShowResultModal(true);
-            },
-          },
           {
             text: 'Enter Manually',
             onPress: () => {
@@ -290,17 +275,16 @@ export default function ScannerScreen({
 
     const decoded = decodePharmaBarcode(cleanManual, 'manual');
     const matchedMaster = matchPharmaMasterMedicine(cleanManual);
-    const matchedPoItem = findMatchingPoItem(cleanManual);
 
     setScanSource('MANUAL');
     setRawCode(cleanManual);
-    setProductName(decoded.productName || matchedMaster?.name || matchedPoItem?.product?.name || cleanManual);
-    setSku(decoded.sku || matchedMaster?.sku || matchedPoItem?.product?.sku || cleanManual);
-    setBatchNumber(decoded.batchNumber || '');
-    setMfgDate('');
-    setExpiryDate(decoded.expiryDate || '');
+    setProductName(decoded.productName || matchedMaster?.name || cleanManual);
+    setSku(decoded.sku || matchedMaster?.sku || cleanManual);
+    setBatchNumber(decoded.batchNumber || matchedMaster?.batchNumber || '');
+    setMfgDate(decoded.mfgDate || matchedMaster?.mfgDate || '');
+    setExpiryDate(decoded.expiryDate || matchedMaster?.expiryDate || '');
     setQuantity('');
-    setPrice('');
+    setPrice(decoded.price ? decoded.price.toString() : (matchedMaster?.price ? matchedMaster.price.toString() : ''));
     setDetectedLines([]);
 
     setShowManualModal(false);
