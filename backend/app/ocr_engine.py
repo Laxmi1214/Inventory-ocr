@@ -12,6 +12,12 @@ os.environ["FLAGS_use_mkldnn"] = "0"
 os.environ["FLAGS_enable_pir_api"] = "0"
 os.environ["FLAGS_enable_pir_in_executor"] = "0"
 
+# Model cache directory in project
+_BASE_DIR = pathlib.Path(__file__).resolve().parent.parent.parent
+_CACHE_DIR = os.path.join(str(_BASE_DIR), ".cache", "easyocr_models")
+if not os.path.exists(_CACHE_DIR):
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+
 # Optional PyTorch multi-threading optimization if torch is installed
 try:
     import torch
@@ -26,38 +32,45 @@ _ocr_lock = threading.Lock()
 
 def get_ocr_engine():
     """
-    Lazy singleton initialization of PaddleOCR 3.x engine.
-    Uses local offline deep-learning weights.
+    Lazy singleton initialization of OCR engine.
+    Uses local offline deep-learning weights in .cache/easyocr_models.
     Zero-cloud, zero-disk retention for utmost pharma confidentiality.
     """
     global _ocr_instance
     if _ocr_instance is None:
         try:
-            from paddleocr import PaddleOCR
-            _ocr_instance = PaddleOCR(
-                ocr_version="PP-OCRv4",
-                lang="en",
-                enable_mkldnn=False,
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
+            import easyocr
+            _ocr_instance = easyocr.Reader(
+                ['en'],
+                gpu=False,
+                download_enabled=False,
+                model_storage_directory=_CACHE_DIR,
+                user_network_directory=_CACHE_DIR,
+                verbose=False
             )
-            print("[OCR ENGINE] PaddleOCR 3.x (PP-OCRv4) engine initialized successfully!")
+            print(f"[OCR ENGINE] EasyOCR engine initialized successfully using {_CACHE_DIR}!")
         except Exception as e:
-            print(f"[OCR ENGINE PADDLEOCR INITIALIZATION ERROR]: {e}")
+            print(f"[OCR ENGINE EASYOCR LOCAL INITIALIZATION ERROR]: {e}")
             try:
                 import easyocr
-                _ocr_instance = easyocr.Reader(['en'], gpu=False, download_enabled=False, verbose=False)
+                _ocr_instance = easyocr.Reader(['en'], gpu=False, download_enabled=True, verbose=False)
                 print("[OCR ENGINE] EasyOCR fallback initialized successfully!")
             except Exception as e2:
-                print(f"[OCR ENGINE FALLBACK ERROR]: {e2}")
-                _ocr_instance = None
+                print(f"[OCR ENGINE EASYOCR DOWNLOAD FALLBACK ERROR]: {e2}")
+                try:
+                    from paddleocr import PaddleOCR
+                    _ocr_instance = PaddleOCR(use_angle_cls=False, lang='en')
+                    print("[OCR ENGINE] PaddleOCR fallback initialized successfully!")
+                except Exception as e3:
+                    print(f"[OCR ENGINE PADDLEOCR FALLBACK ERROR]: {e3}")
+                    _ocr_instance = None
     return _ocr_instance
 
 def run_paddle_ocr(image_bytes: bytes) -> List[Dict[str, Any]]:
     """
-    High-Speed Pharmaceutical OCR on in-memory image bytes using PaddleOCR.
+    High-Speed Pharmaceutical OCR on in-memory image bytes.
     Thread-safe execution with zero-disk retention.
-    NO STATIC FALLBACK TEXT: returns exactly what is detected on the packaging.
+    Returns detected text lines and any QR / 2D barcodes found on packaging.
     """
     try:
         pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -73,52 +86,30 @@ def run_paddle_ocr(image_bytes: bytes) -> List[Dict[str, Any]]:
         print(f"[IMAGE DECODE ERROR]: {img_err}")
         return []
 
-    engine = get_ocr_engine()
     results: List[Dict[str, Any]] = []
 
+    # 1. Barcode & QR Code scan using OpenCV
+    try:
+        import cv2
+        qr_detector = cv2.QRCodeDetector()
+        qr_text, _, _ = qr_detector.detectAndDecode(np_image)
+        if qr_text and qr_text.strip():
+            results.append({
+                "text": qr_text.strip(),
+                "confidence": 1.0,
+                "box": []
+            })
+    except Exception as cv_err:
+        print(f"[OPENCV QR DECODE NOTICE]: {cv_err}")
+
+    engine = get_ocr_engine()
     if engine is None:
         return results
 
-    # Thread-safe prediction: prevent concurrent C++ memory access violations on Windows
+    # Thread-safe prediction
     with _ocr_lock:
         try:
-            # 1. Try PaddleOCR predict API (PaddleOCR 3.x / Paddlex)
-            if hasattr(engine, "predict"):
-                predictions = list(engine.predict(np_image))
-                for page in predictions:
-                    if isinstance(page, dict):
-                        rec_texts = page.get("rec_texts", [])
-                        rec_scores = page.get("rec_scores", [])
-                        rec_polys = page.get("rec_polys", page.get("dt_polys", []))
-                        for idx, text in enumerate(rec_texts):
-                            t = str(text).strip()
-                            if t:
-                                score = float(rec_scores[idx]) if idx < len(rec_scores) else 0.95
-                                poly = rec_polys[idx] if idx < len(rec_polys) else []
-                                box = poly.tolist() if hasattr(poly, "tolist") else (list(poly) if isinstance(poly, (list, tuple)) else [])
-                                results.append({
-                                    "text": t,
-                                    "confidence": round(score, 3),
-                                    "box": box
-                                })
-                    elif isinstance(page, list):
-                        for item in page:
-                            if isinstance(item, list) and len(item) == 2:
-                                box = item[0]
-                                text_tuple = item[1]
-                                if isinstance(text_tuple, (tuple, list)) and len(text_tuple) >= 2:
-                                    t = str(text_tuple[0]).strip()
-                                    s = float(text_tuple[1])
-                                    if t:
-                                        results.append({
-                                            "text": t,
-                                            "confidence": round(s, 3),
-                                            "box": box.tolist() if hasattr(box, "tolist") else list(box)
-                                        })
-                if results:
-                    return results
-
-            # 2. Try EasyOCR readtext API (if fallback was loaded)
+            # 1. EasyOCR readtext
             if hasattr(engine, "readtext"):
                 raw_detections = engine.readtext(np_image, canvas_size=1080, batch_size=8, workers=0, detail=1)
                 for item in raw_detections:
@@ -126,7 +117,7 @@ def run_paddle_ocr(image_bytes: bytes) -> List[Dict[str, Any]]:
                         box = item[0]
                         text = str(item[1]).strip()
                         conf = float(item[2])
-                        if text:
+                        if text and conf > 0.15:
                             results.append({
                                 "text": text,
                                 "confidence": round(conf, 3),
@@ -134,8 +125,27 @@ def run_paddle_ocr(image_bytes: bytes) -> List[Dict[str, Any]]:
                             })
                 return results
 
+            # 2. PaddleOCR predict / ocr API
+            if hasattr(engine, "ocr"):
+                ocr_out = engine.ocr(np_image, cls=False)
+                if ocr_out and ocr_out[0]:
+                    for item in ocr_out[0]:
+                        if len(item) == 2:
+                            box = item[0]
+                            text_tuple = item[1]
+                            if isinstance(text_tuple, (tuple, list)) and len(text_tuple) >= 2:
+                                t = str(text_tuple[0]).strip()
+                                s = float(text_tuple[1])
+                                if t:
+                                    results.append({
+                                        "text": t,
+                                        "confidence": round(s, 3),
+                                        "box": box if isinstance(box, list) else list(box)
+                                    })
+                return results
+
         except Exception as err:
             print(f"[OCR INFERENCE ERROR]: {err}")
-            return []
+            return results
 
     return results

@@ -56,7 +56,7 @@ function startPythonOcrService() {
 
   function spawnOcr() {
     console.log('[NODE BRIDGE] Spawning Python OCR service (FastAPI / PaddleOCR)...');
-    pythonProc = spawn(PYTHON_EXE, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(PYTHON_TARGET_PORT)], {
+    pythonProc = spawn(PYTHON_EXE, ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', String(PYTHON_TARGET_PORT)], {
       cwd: __dirname,
       env: {
         ...process.env,

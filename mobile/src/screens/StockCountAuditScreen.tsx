@@ -17,7 +17,7 @@ import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { StockAuditTask, submitStockAudit } from '../services/auditService';
-import { decodePharmaBarcode, ExtractedLabelData } from '../services/ocr';
+import { decodePharmaBarcode, matchPharmaMasterMedicine, ExtractedLabelData } from '../services/ocr';
 import { sendBase64ToPaddleOcr, sendImageToPaddleOcr } from '../services/inventoryService';
 
 interface StockCountAuditScreenProps {
@@ -100,11 +100,13 @@ export default function StockCountAuditScreen({
     isBusyRef.current = true;
 
     const decoded = decodePharmaBarcode(data, type);
+    const matchedMaster = matchPharmaMasterMedicine(decoded.barcode || decoded.sku || decoded.productName || data);
+
     setScanSource(decoded.source === 'QR_CODE' ? 'QR_CODE' : 'BARCODE');
-    setScannedProductName(decoded.productName || task.productName);
-    setScannedSku(decoded.sku || task.sku);
-    setScannedBatch(decoded.batchNumber || task.batchNumber || '');
-    setScannedExpiry(decoded.expiryDate || task.expiryDate || '');
+    setScannedProductName(decoded.productName || matchedMaster?.name || (data ? `Scanned (${data.substring(0, 16)})` : ''));
+    setScannedSku(decoded.sku || matchedMaster?.sku || '');
+    setScannedBatch(decoded.batchNumber || matchedMaster?.batchNumber || '');
+    setScannedExpiry(decoded.expiryDate || matchedMaster?.expiryDate || '');
 
     // Default physical count to system quantity or scanned quantity
     const defaultQty = decoded.quantity || task.systemQty;
@@ -162,11 +164,15 @@ export default function StockCountAuditScreen({
         return;
       }
 
+      const combinedOcrText = [ocrData.medicineName, ocrData.sku, ocrData.rawText, ...(ocrData.allLines || [])].filter(Boolean).join(' ');
+      const matchedMaster = matchPharmaMasterMedicine(combinedOcrText);
+
       setScanSource('OCR');
-      setScannedProductName(ocrData.medicineName || task.productName);
-      setScannedSku(ocrData.sku || task.sku);
-      setScannedBatch(ocrData.batchNumber || task.batchNumber || '');
-      setScannedExpiry(ocrData.expiryDate || task.expiryDate || '');
+      const detectedName = ocrData.medicineName && ocrData.medicineName !== 'Pharmaceutical Item' && ocrData.medicineName !== 'No text detected' ? ocrData.medicineName : '';
+      setScannedProductName(matchedMaster?.name || detectedName || (ocrData.allLines?.[0] || 'Unknown Scanned Item'));
+      setScannedSku(matchedMaster?.sku || ocrData.sku || '');
+      setScannedBatch(ocrData.batchNumber || matchedMaster?.batchNumber || '');
+      setScannedExpiry(ocrData.expiryDate || matchedMaster?.expiryDate || '');
 
       setPhysicalCount(task.systemQty);
       setCountInputText(String(task.systemQty));
@@ -194,11 +200,12 @@ export default function StockCountAuditScreen({
       return;
     }
 
+    const matched = matchPharmaMasterMedicine(manualCode);
     setScanSource('MANUAL');
-    setScannedProductName(task.productName);
-    setScannedSku(manualCode.trim() || task.sku);
-    setScannedBatch(manualBatch.trim() || task.batchNumber || '');
-    setScannedExpiry(task.expiryDate || '');
+    setScannedProductName(matched?.name || manualCode.trim());
+    setScannedSku(matched?.sku || manualCode.trim());
+    setScannedBatch(manualBatch.trim() || matched?.batchNumber || '');
+    setScannedExpiry(matched?.expiryDate || '');
 
     setPhysicalCount(task.systemQty);
     setCountInputText(String(task.systemQty));

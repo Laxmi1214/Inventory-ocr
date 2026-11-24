@@ -165,6 +165,33 @@ const FALLBACK_SHIPMENTS: InboundShipmentWithItems[] = [
       },
     ],
   },
+  {
+    id: 'po-ship-006',
+    poNumber: 'PO-2026-0896',
+    supplierName: 'Chartwell Pharmaceuticals LLC',
+    status: 'PENDING',
+    expectedDeliveryDate: new Date(Date.now() + 518400000).toISOString(),
+    notes: 'Doxycycline Hyclate Capsules USP 50mg. NDC: 62135-984-05. Barcode: 62135984052.',
+    items: [
+      {
+        id: 'item-doxy-006',
+        shipmentId: 'po-ship-006',
+        productId: 'prod-doxy-050',
+        expectedBatch: 'BTH-DOXY-5098',
+        expectedQty: 50,
+        receivedQty: 0,
+        status: 'PENDING',
+        product: {
+          id: 'prod-doxy-050',
+          sku: 'MED-DOXY-050',
+          name: 'Doxycycline Hyclate Capsules, USP 50 mg',
+          barcode: '62135984052',
+          packSize: 'Bottle of 500 Capsules',
+          unit: 'BOTTLE',
+        },
+      },
+    ],
+  },
 ];
 
 const BACKEND_BASE_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.45:8080';
