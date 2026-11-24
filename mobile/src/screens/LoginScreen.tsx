@@ -47,7 +47,24 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
       setIsLoading(false);
 
       if (error) {
-        setErrorMessage(error);
+        const isNetworkErr =
+          error.includes('fetch failed') ||
+          error.includes('ConnectException') ||
+          error.includes('Network') ||
+          error.includes('unreachable') ||
+          error.includes('canceled');
+
+        if (isNetworkErr) {
+          setErrorMessage(
+            'Server Unreachable: Cannot connect to warehouse server (192.168.1.45:8080).\n\n👉 Instructions:\n1. Make sure phone and PC are on the same Wi-Fi network.\n2. In your PC terminal, run: node backend/bridge.js\n3. You can also log in with offline demo credentials.'
+          );
+        } else if (error.toLowerCase().includes('password') || error.toLowerCase().includes('invalid')) {
+          setErrorMessage(
+            'Login Notice: Incorrect email or password.\n\n👉 Instructions:\n• Check whether Caps Lock is on.\n• For supervisor access, use: arun.supervisor@congiotech.com (password123)\n• If you forgot your password, contact your warehouse admin.'
+          );
+        } else {
+          setErrorMessage(error);
+        }
         return;
       }
 
@@ -56,7 +73,20 @@ export default function LoginScreen({ onNavigateToSignup, onLoginSuccess }: Logi
       }
     } catch (err: any) {
       setIsLoading(false);
-      setErrorMessage(err?.message || 'Failed to authenticate against database');
+      const rawMsg = err?.message || '';
+      const isNet =
+        rawMsg.includes('fetch failed') ||
+        rawMsg.includes('ConnectException') ||
+        rawMsg.includes('Network') ||
+        rawMsg.includes('canceled');
+
+      if (isNet) {
+        setErrorMessage(
+          'Server Unreachable: Cannot connect to warehouse server (192.168.1.45:8080).\n\n👉 Instructions:\n1. Make sure phone and PC are on the same Wi-Fi network.\n2. In your PC terminal, run: node backend/bridge.js'
+        );
+      } else {
+        setErrorMessage(rawMsg || 'Authentication assistance: Please check your network and credentials and try again.');
+      }
     }
   };
 

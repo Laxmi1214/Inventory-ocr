@@ -197,8 +197,8 @@ export default function PickPackOrdersScreen({
             <Text style={styles.emptyTitle}>No Orders Found</Text>
             <Text style={styles.emptySubtitle}>
               {searchQuery
-                ? `No orders matching "${searchQuery}"`
-                : 'All outbound orders have been fulfilled.'}
+                ? `No orders match "${searchQuery}".\n\n👉 Tip: Search by Hospital/Pharmacy name (e.g. "Apollo", "Fortis") or Order Number (e.g. "ORD-2026-4412").`
+                : 'All outbound customer orders have been fulfilled and dispatched.'}
             </Text>
           </View>
         ) : (

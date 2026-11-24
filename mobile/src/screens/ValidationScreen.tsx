@@ -304,10 +304,14 @@ export default function ValidationScreen({
   const handleConfirmIntake = async () => {
     if (!validationResults.isOverallPass) {
       Alert.alert(
-        'Validation Blocked',
-        `Cannot ${isPickMode ? 'dispatch stock' : 'add to inventory'} because verification check(s) failed:\n\n• ` +
+        'Verification Guidance Required',
+        `Cannot ${isPickMode ? 'dispatch stock' : 'record into active inventory'} due to the following verification check(s):\n\n• ` +
           validationResults.reasons.join('\n• ') +
-          '\n\nPlease resolve the discrepancy or route to Quarantine.'
+          `\n\n👉 Instructions for Operator:\n1. Verify whether the physical pack matches PO #${targetCode}.\n2. If packaging is damaged, expired, or incorrect, tap 'Route to Quarantine' below.\n3. Or edit the fields above to correct any typographical mistake.`,
+        [
+          { text: 'Review Fields', style: 'default' },
+          { text: 'Route to Quarantine', style: 'destructive', onPress: () => setShowDiscrepancyModal(true) },
+        ]
       );
       return;
     }
@@ -338,7 +342,19 @@ export default function ValidationScreen({
         }
       }
     } catch (err: any) {
-      Alert.alert(isPickMode ? 'Dispatch Error' : 'Intake Error', err?.message || 'Transaction failed.');
+      const raw = err?.message || '';
+      const isNet =
+        raw.includes('fetch failed') ||
+        raw.includes('ConnectException') ||
+        raw.includes('Network') ||
+        raw.includes('canceled');
+
+      Alert.alert(
+        isPickMode ? 'Dispatch Assistance' : 'Intake Assistance',
+        isNet
+          ? 'Cannot connect to warehouse server (192.168.1.45:8080).\n\n👉 Instructions:\n1. Check your phone Wi-Fi connection.\n2. Ensure "node backend/bridge.js" is running on your PC terminal.\n3. Retry saving once connected.'
+          : `Transaction Notice: ${raw || 'Operation could not complete.'}\n\n👉 Instruction: Verify your network and tap Confirm again, or tap 'Flag Discrepancy' if item has an issue.`
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -361,7 +377,19 @@ export default function ValidationScreen({
         }
       );
     } catch (err: any) {
-      Alert.alert('Discrepancy Error', err?.message || 'Failed to flag discrepancy.');
+      const raw = err?.message || '';
+      const isNet =
+        raw.includes('fetch failed') ||
+        raw.includes('ConnectException') ||
+        raw.includes('Network') ||
+        raw.includes('canceled');
+
+      Alert.alert(
+        'Discrepancy Notice',
+        isNet
+          ? 'Cannot reach warehouse server to log discrepancy.\n\n👉 Instructions:\n1. Verify Wi-Fi network connection.\n2. Ensure "node backend/bridge.js" is active on your PC.\n3. Retry recording discrepancy.'
+          : `Discrepancy Submission Guide: ${raw || 'Could not record discrepancy.'}\n\n👉 Instruction: Please check the notes field and retry.`
+      );
     } finally {
       setIsSubmitting(false);
     }

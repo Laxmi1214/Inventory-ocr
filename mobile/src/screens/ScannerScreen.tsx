@@ -192,8 +192,12 @@ export default function ScannerScreen({
 
       if (!ocrData || (!ocrData.allLines?.length && !ocrData.rawText?.trim())) {
         Alert.alert(
-          'No Text Detected',
-          'Could not detect readable text on medicine package. Please position it closer with adequate lighting and try again.'
+          'Camera Positioning Instructions',
+          'Could not detect readable text on this medicine package.\n\n👉 Instructions for a clear scan:\n1. Hold camera 15–20 cm away from the package.\n2. Ensure room lighting is adequate and tilt slightly to avoid reflections on glossy foil.\n3. Keep text horizontal inside the blue targeting reticle.',
+          [
+            { text: 'Scan Again', style: 'default' },
+            { text: 'Enter Details Manually', onPress: () => setShowManualModal(true) },
+          ]
         );
         return;
       }
@@ -232,13 +236,14 @@ export default function ScannerScreen({
         err?.message?.includes('ConnectException') ||
         err?.message?.includes('fetch failed') ||
         err?.message?.includes('Network request failed') ||
-        err?.message?.includes('Failed to connect');
+        err?.message?.includes('Failed to connect') ||
+        err?.message?.includes('canceled');
 
       Alert.alert(
-        'OCR Microservice Notice',
+        'Server Connection Guidance',
         isConnectionError
-          ? `Backend OCR server unreachable (${targetCode ? `Order ${targetCode}` : 'at 192.168.1.45:8080'}).\n\nMake sure 'node backend/bridge.js' is running on your PC.\n\nWould you like to auto-fill expected medicine details or enter manually?`
-          : (err.message || 'Failed to process image with OCR microservice.'),
+          ? `Cannot reach warehouse server (192.168.1.45:8080).\n\n👉 Instructions to reconnect:\n1. Ensure phone & PC are on the same Wi-Fi.\n2. In PC terminal, run: node backend/bridge.js\n\nYou can also enter details manually to keep working without interruption.`
+          : `OCR Assistance: ${err?.message || 'Processing timed out.'}\n\n👉 Tip: Hold packaging steady and try capturing again.`,
         [
           {
             text: 'Auto-fill Expected Item',
@@ -276,7 +281,10 @@ export default function ScannerScreen({
   const handleManualSubmit = () => {
     const cleanManual = manualCode.trim();
     if (!cleanManual) {
-      Alert.alert('Input Required', 'Please enter a barcode number or product SKU.');
+      Alert.alert(
+        'Search Guidance',
+        '👉 Instruction: Please enter a 4-digit medicine SKU (e.g. "MED-CALP-650"), product barcode, or medicine name to look up this item.'
+      );
       return;
     }
 
@@ -303,44 +311,108 @@ export default function ScannerScreen({
   // 4. Confirm Receiving / Picking of This Item
   const handleConfirmReceiving = () => {
     if (!productName.trim()) {
-      Alert.alert('Validation Error', 'Product Name is required.');
+      Alert.alert(
+        'Product Name Required',
+        '👉 Instruction: Please verify or enter the medicine brand name (e.g. "Calpol 650 Tablets") before proceeding.'
+      );
       return;
     }
     if (!batchNumber.trim()) {
-      Alert.alert('Validation Error', 'Batch / Lot Number is required for pharma tracking.');
+      Alert.alert(
+        'Batch Number Required',
+        '👉 Instruction: Pharma tracking requires a Lot/Batch number. Please locate the batch code on physical packaging (e.g. "BTH-CALP-2601") and enter it here.'
+      );
       return;
     }
     if (!expiryDate.trim() && !isPickMode) {
-      Alert.alert('Validation Error', 'Expiry Date is required for pharmaceutical tracking (e.g. MM/YYYY).');
+      Alert.alert(
+        'Expiry Date Required',
+        '👉 Instruction: Regulatory compliance requires an expiry date for medicine intake. Please enter the date on the pack (e.g. "10/2028" or "MM/YYYY").'
+      );
       return;
     }
     const numQty = parseInt(quantity, 10);
     if (!quantity.trim() || isNaN(numQty) || numQty <= 0) {
       Alert.alert(
-        'Physical Count Required',
-        'Pharma compliance requires the warehouse operator to physically count the delivery packs and enter the verified quantity. Please enter the physical pack count.'
+        'Physical Pack Count Required',
+        '👉 Instruction: Pharma compliance mandates that you physically count the units delivered and enter the verified count (must be at least 1).'
       );
       return;
     }
 
-    setShowResultModal(false);
+    // Expiry date safety check
+    const isExpired = (() => {
+      if (!expiryDate.trim()) return false;
+      const parts = expiryDate.trim().split(/[\/\-\.]/);
+      if (parts.length === 2) {
+        let m = parseInt(parts[0], 10);
+        let y = parseInt(parts[1], 10);
+        if (isNaN(m) || isNaN(y)) return false;
+        if (y < 100) y += 2000;
+        const now = new Date();
+        const curY = now.getFullYear();
+        const curM = now.getMonth() + 1;
+        return y < curY || (y === curY && m < curM);
+      }
+      return false;
+    })();
 
-    const extractedData: ExtractedLabelData = {
-      source: scanSource === 'OCR' ? 'MANUAL' : scanSource,
-      productName: productName.trim(),
-      sku: sku.trim(),
-      batchNumber: batchNumber.trim(),
-      mfgDate: mfgDate.trim() || undefined,
-      expiryDate: expiryDate.trim() || undefined,
-      quantity: numQty,
-      price: price.trim() || undefined,
-      poNumber: poNumber.trim() || targetCode,
-      barcode: rawCode || undefined,
-      confidence: 0.95,
-      rawText: detectedLines.join('\n'),
+    const doProceed = () => {
+      setShowResultModal(false);
+
+      const extractedData: ExtractedLabelData = {
+        source: scanSource === 'OCR' ? 'MANUAL' : scanSource,
+        productName: productName.trim(),
+        sku: sku.trim(),
+        batchNumber: batchNumber.trim(),
+        mfgDate: mfgDate.trim() || undefined,
+        expiryDate: expiryDate.trim() || undefined,
+        quantity: numQty,
+        price: price.trim() || undefined,
+        poNumber: poNumber.trim() || targetCode,
+        barcode: rawCode || undefined,
+        confidence: 0.95,
+        rawText: detectedLines.join('\n'),
+      };
+
+      onProceedToValidate(extractedData, shipment, order);
     };
 
-    onProceedToValidate(extractedData, shipment, order);
+    if (!isPickMode && isExpired) {
+      Alert.alert(
+        'Safety Alert: Medicine Expired',
+        `The entered Expiry Date (${expiryDate.trim()}) is in the past!\n\n👉 Regulatory Directive:\nExpired pharmaceuticals must NOT be accepted into active warehouse stock.\n\nWould you like to route this pack to Quarantine for supervisor review, or re-check the date?`,
+        [
+          { text: 'Re-check Date', style: 'cancel' },
+          {
+            text: 'Route to Quarantine',
+            style: 'destructive',
+            onPress: doProceed,
+          },
+        ]
+      );
+      return;
+    }
+
+    // Check for excess quantity warning
+    const expectedQty = primaryItem
+      ? (shipment?.items?.find((it) => it.product?.sku === sku || it.product?.name === productName)?.expectedQty ||
+         order?.items?.[0]?.requiredQty)
+      : null;
+
+    if (expectedQty && numQty > expectedQty) {
+      Alert.alert(
+        'Excess Quantity Notice',
+        `You entered ${numQty} packs, but the expected PO quantity is ${expectedQty} packs.\n\n👉 Instruction:\nIf the vendor delivered extra packs, verify your physical count. If confirmed, proceed to validation where a Supervisor discrepancy will be recorded.`,
+        [
+          { text: 'Re-count', style: 'cancel' },
+          { text: 'Confirm Excess Count', onPress: doProceed },
+        ]
+      );
+      return;
+    }
+
+    doProceed();
   };
 
   // 5. Reset Scanner for Next Scan
