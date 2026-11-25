@@ -305,19 +305,6 @@ export default function ProfileScreen({
 
           <View style={styles.divider} />
 
-          {/* Item 4: Staff ID */}
-          <View style={styles.infoRow}>
-            <View style={styles.infoIconWrapper}>
-              <Ionicons name="finger-print-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.infoTextCol}>
-              <Text style={styles.infoLabel}>Staff Employee ID</Text>
-              <Text style={styles.infoValue}>{currentUser.id || 'EMP-PHARMA-2026-904'}</Text>
-            </View>
-          </View>
-
-          <View style={styles.divider} />
-
           {/* Item 5: Assigned Facility */}
           <View style={styles.infoRow}>
             <View style={styles.infoIconWrapper}>
