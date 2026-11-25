@@ -1714,7 +1714,7 @@ const server = http.createServer(async (req, res) => {
             INSERT INTO public.inventory_transactions (product_id, batch_id, type, quantity, notes, created_by)
             VALUES (
               ${targetProductId}, 
-              ${batchId}, 
+              ${batchId || null}, 
               'INBOUND', 
               ${quantityAdded}, 
               ${'PO ' + poNumber + ' Partial Deviation Approved: +' + quantityAdded + ' units (' + reason.trim() + ')'}, 
@@ -1752,7 +1752,7 @@ const server = http.createServer(async (req, res) => {
         UPDATE public.inbound_shipments
         SET 
           status = ${newStatus},
-          notes = CONCAT(COALESCE(notes, ''), ${noteAppend}),
+          notes = CONCAT(COALESCE(notes, ''), ${noteAppend}::text),
           updated_at = NOW()
         WHERE LOWER(po_number) = ${poNumber.trim().toLowerCase()}
       `;

@@ -163,8 +163,8 @@ export async function resolveStockAuditVariance(params: {
     return { success: false, message: data.error || 'Failed to resolve audit variance' };
   } catch (err: any) {
     return {
-      success: true,
-      message: `Offline Simulated: ${decision === 'APPROVE' ? 'Approved & stock adjusted' : 'Rejected & recount ordered'}. (${err.message})`,
+      success: false,
+      message: `Connection Error: Backend server is unreachable at ${BACKEND_BASE_URL}.\n\n👉 Instructions:\n1. Verify your PC is running 'node bridge.js'.\n2. Ensure both your phone and PC are connected to the same Wi-Fi network.\n(${err.message})`,
     };
   }
 }
@@ -203,8 +203,8 @@ export async function resolvePoDiscrepancy(params: {
     return { success: false, message: data.error || 'Failed to resolve PO discrepancy' };
   } catch (err: any) {
     return {
-      success: true,
-      message: `Offline Simulated: ${decision === 'APPROVE' ? 'Approved with deviation' : 'Marked return to vendor'}. (${err.message})`,
+      success: false,
+      message: `Connection Error: Backend server is unreachable at ${BACKEND_BASE_URL}.\n\n👉 Instructions:\n1. Verify your PC is running 'node bridge.js'.\n2. Ensure both your phone and PC are connected to the same Wi-Fi network.\n(${err.message})`,
     };
   }
 }
