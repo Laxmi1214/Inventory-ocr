@@ -1,0 +1,17 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "Privacy-first, zero-disk-retention optical character recognition (OCR) microservice tailored for extracting pharmaceutical entities from medicine strips, boxes, and cartons.",
+  "main": "bridge.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "argon2": "^0.45.2",
+    "jsonwebtoken": "^9.0.3"
+  }
+}

@@ -20,6 +20,8 @@ export interface UserSession {
 
 const STORAGE_USERS_KEY = '@congiotech_users_table_v1';
 const STORAGE_SESSION_KEY = '@congiotech_active_session_v1';
+export const STORAGE_ACCESS_TOKEN_KEY = '@congiotech_access_token_v1';
+export const STORAGE_REFRESH_TOKEN_KEY = '@congiotech_refresh_token_v1';
 const AUTH_API_URL = process.env.EXPO_PUBLIC_OCR_API_URL || 'http://192.168.1.45:8080';
 
 // In-memory fallback map for environments without native AsyncStorage
@@ -68,6 +70,89 @@ export const safeStorage = {
     }
   },
 };
+
+/**
+ * JWT Token Helpers
+ */
+export async function getAccessToken(): Promise<string | null> {
+  return await safeStorage.getItem(STORAGE_ACCESS_TOKEN_KEY);
+}
+
+export async function getRefreshToken(): Promise<string | null> {
+  return await safeStorage.getItem(STORAGE_REFRESH_TOKEN_KEY);
+}
+
+export async function setAuthTokens(accessToken: string, refreshToken: string): Promise<void> {
+  await safeStorage.setItem(STORAGE_ACCESS_TOKEN_KEY, accessToken);
+  await safeStorage.setItem(STORAGE_REFRESH_TOKEN_KEY, refreshToken);
+}
+
+export async function clearAuthTokens(): Promise<void> {
+  await safeStorage.removeItem(STORAGE_ACCESS_TOKEN_KEY);
+  await safeStorage.removeItem(STORAGE_REFRESH_TOKEN_KEY);
+}
+
+/**
+ * Silent Refresh Access Token using Refresh Token
+ */
+export async function refreshAuthTokens(): Promise<string | null> {
+  try {
+    const refreshToken = await getRefreshToken();
+    if (!refreshToken) return null;
+
+    const res = await fetch(`${AUTH_API_URL}/api/v1/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.accessToken) {
+        await safeStorage.setItem(STORAGE_ACCESS_TOKEN_KEY, data.accessToken);
+        return data.accessToken;
+      }
+    }
+    return null;
+  } catch (refreshErr) {
+    console.warn('[AUTH REFRESH NOTICE] Could not refresh token:', refreshErr);
+    return null;
+  }
+}
+
+/**
+ * Fetch wrapper that attaches JWT Bearer token and automatically refreshes token on 401
+ */
+export async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  let accessToken = await getAccessToken();
+  const headers = new Headers(init?.headers || {});
+
+  if (accessToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${accessToken}`);
+  }
+
+  const modifiedInit: RequestInit = {
+    ...init,
+    headers,
+  };
+
+  let response = await fetch(input, modifiedInit);
+
+  // If 401 Unauthorized, attempt token refresh and retry once
+  if (response.status === 401) {
+    const newAccessToken = await refreshAuthTokens();
+    if (newAccessToken) {
+      const retryHeaders = new Headers(init?.headers || {});
+      retryHeaders.set('Authorization', `Bearer ${newAccessToken}`);
+      response = await fetch(input, {
+        ...init,
+        headers: retryHeaders,
+      });
+    }
+  }
+
+  return response;
+}
 
 /**
  * Initial seed users in the database table
@@ -246,6 +331,10 @@ export async function registerUser(
         return { error: data.error || 'Failed to register user in database' };
       }
 
+      if (data.accessToken && data.refreshToken) {
+        await setAuthTokens(data.accessToken, data.refreshToken);
+      }
+
       const registeredUser: UserRecord = {
         id: data.user.id,
         username: data.user.username,
@@ -325,6 +414,10 @@ export async function loginUser(
 
       if (!response.ok || !data.success) {
         return { error: data.error || 'Authentication failed against database' };
+      }
+
+      if (data.accessToken && data.refreshToken) {
+        await setAuthTokens(data.accessToken, data.refreshToken);
       }
 
       const session: UserSession = {
@@ -409,11 +502,24 @@ export async function getActiveSessionUser(): Promise<UserSession | null> {
 }
 
 /**
- * Log out user by clearing session
+ * Log out user by revoking server refresh token and clearing session & JWT tokens
  */
 export async function logoutUser(): Promise<void> {
   try {
+    const refreshToken = await getRefreshToken();
+    if (refreshToken) {
+      try {
+        await fetch(`${AUTH_API_URL}/api/v1/auth/logout`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        });
+      } catch (err) {
+        // Best effort logout on server
+      }
+    }
     await safeStorage.removeItem(STORAGE_SESSION_KEY);
+    await clearAuthTokens();
   } catch (err) {
     console.warn('Logout session clear warning:', err);
   }

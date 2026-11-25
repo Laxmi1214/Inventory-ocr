@@ -33,6 +33,57 @@ try {
   console.warn('[NODE BRIDGE] PostgreSQL driver init notice:', dbErr.message);
 }
 
+// -------------------------------------------------------------
+// Security: Argon2id Password Hashing & Dual JWT Authentication
+// -------------------------------------------------------------
+const argon2 = require('argon2');
+const jwt = require('jsonwebtoken');
+
+const JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'congiotech_pharma_jwt_access_secret_2026_super_secure';
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'congiotech_pharma_jwt_refresh_secret_2026_super_secure';
+
+async function generateTokens(user) {
+  const payload = {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    role: user.role
+  };
+  const accessToken = jwt.sign(payload, JWT_ACCESS_SECRET, { expiresIn: '15m' });
+  const refreshToken = jwt.sign({ id: user.id }, JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+  // Store refresh token in public.refresh_tokens table for validation and revocation
+  if (sql) {
+    try {
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await sql`
+        INSERT INTO public.refresh_tokens (user_id, token, expires_at)
+        VALUES (${user.id}, ${refreshToken}, ${expiresAt})
+      `;
+    } catch (tokenErr) {
+      console.warn('[AUTH REFRESH TOKEN DB NOTICE]:', tokenErr.message);
+    }
+  }
+
+  return {
+    accessToken,
+    refreshToken,
+    expiresIn: 900 // 15 mins in seconds
+  };
+}
+
+function verifyAccessToken(req) {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) return null;
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') return null;
+  try {
+    return jwt.verify(parts[1], JWT_ACCESS_SECRET);
+  } catch (err) {
+    return null;
+  }
+}
+
 const PORT = 8080;
 const PYTHON_TARGET_PORT = 8001;
 const localVenvPython = path.resolve(__dirname, '..', 'ocr-service', '.venv', 'Scripts', 'python.exe');
@@ -255,7 +306,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
-  // Route 1: Register User in PostgreSQL Database
+  // Route 1: Register User in PostgreSQL Database (Argon2id + JWT)
   // -------------------------------------------------------------
   if (req.method === 'POST' && urlPath === '/api/v1/auth/register') {
     try {
@@ -289,18 +340,32 @@ const server = http.createServer(async (req, res) => {
       const id = `USR-${Date.now().toString(36).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
       const cleanRole = (role || 'OPERATOR').toUpperCase();
 
+      // Hash password using Argon2id
+      const hashedPassword = await argon2.hash(password.trim(), {
+        type: argon2.argon2id,
+        memoryCost: 65536,
+        timeCost: 3,
+        parallelism: 4
+      });
+
       const inserted = await sql`
         INSERT INTO public.users (id, username, email, password, role)
-        VALUES (${id}, ${username.trim()}, ${cleanEmail}, ${password}, ${cleanRole})
+        VALUES (${id}, ${username.trim()}, ${cleanEmail}, ${hashedPassword}, ${cleanRole})
         RETURNING id, username, email, role, created_at
       `;
 
-      console.log(`[DB AUTH] User registered successfully in PostgreSQL: ${cleanEmail} (${id})`);
+      const newUser = inserted[0];
+      const tokens = await generateTokens(newUser);
+
+      console.log(`[DB AUTH] User registered successfully with Argon2id hash: ${cleanEmail} (${id})`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: true,
-        user: inserted[0]
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.expiresIn,
+        user: newUser
       }));
     } catch (authErr) {
       console.error('[DB AUTH ERROR]:', authErr.message);
@@ -310,7 +375,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
-  // Route 2: Login User against PostgreSQL Database
+  // Route 2: Login User against PostgreSQL Database (Argon2id + JWT Dual Tokens)
   // -------------------------------------------------------------
   if (req.method === 'POST' && urlPath === '/api/v1/auth/login') {
     try {
@@ -342,16 +407,43 @@ const server = http.createServer(async (req, res) => {
       }
 
       const user = found[0];
-      if (user.password !== password && user.password !== password.trim()) {
+      let isValidPassword = false;
+
+      // Check Argon2 hash or auto-upgrade plain text
+      try {
+        if (user.password && user.password.startsWith('$argon2')) {
+          isValidPassword = await argon2.verify(user.password, password.trim());
+        } else if (user.password === password || user.password === password.trim()) {
+          isValidPassword = true;
+          // Transparent upgrade to Argon2id in DB
+          const newHash = await argon2.hash(password.trim(), {
+            type: argon2.argon2id,
+            memoryCost: 65536,
+            timeCost: 3,
+            parallelism: 4
+          });
+          await sql`UPDATE public.users SET password = ${newHash} WHERE id = ${user.id}`;
+          console.log(`[DB AUTH] Transparently migrated plain-text password to Argon2id for: ${user.email}`);
+        }
+      } catch (verifyErr) {
+        console.error('[AUTH VERIFY ERROR]:', verifyErr.message);
+      }
+
+      if (!isValidPassword) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ success: false, error: 'Incorrect password. Please verify and try again.' }));
       }
 
-      console.log(`[DB AUTH] User logged in successfully: ${user.email} (${user.role})`);
+      const tokens = await generateTokens(user);
+
+      console.log(`[DB AUTH] User logged in successfully: ${user.email} (${user.role}) - JWT Dual Tokens issued`);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         success: true,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: tokens.expiresIn,
         user: {
           id: user.id,
           username: user.username,
@@ -364,6 +456,146 @@ const server = http.createServer(async (req, res) => {
       console.error('[DB LOGIN ERROR]:', loginErr.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ success: false, error: loginErr.message || 'Database login failed' }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 2.1: Refresh Access Token using Refresh Token
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/auth/refresh') {
+    try {
+      const data = await parseJsonBody(req);
+      const { refreshToken } = data;
+
+      if (!refreshToken) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Refresh token is required' }));
+      }
+
+      let decoded;
+      try {
+        decoded = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
+      } catch (jwtErr) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Invalid or expired refresh token' }));
+      }
+
+      if (!sql) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Database connection not initialized' }));
+      }
+
+      // Check DB refresh_tokens table: must exist, not revoked, and not expired
+      const tokenRecords = await sql`
+        SELECT id, user_id, revoked, expires_at
+        FROM public.refresh_tokens
+        WHERE token = ${refreshToken}
+        LIMIT 1
+      `;
+
+      if (tokenRecords.length === 0 || tokenRecords[0].revoked || new Date(tokenRecords[0].expires_at) < new Date()) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Refresh token is invalid, revoked, or expired' }));
+      }
+
+      // Fetch user profile
+      const userRows = await sql`
+        SELECT id, username, email, role
+        FROM public.users
+        WHERE id = ${tokenRecords[0].user_id}
+        LIMIT 1
+      `;
+
+      if (userRows.length === 0) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Associated user account not found' }));
+      }
+
+      const activeUser = userRows[0];
+      const newAccessToken = jwt.sign(
+        {
+          id: activeUser.id,
+          username: activeUser.username,
+          email: activeUser.email,
+          role: activeUser.role
+        },
+        JWT_ACCESS_SECRET,
+        { expiresIn: '15m' }
+      );
+
+      console.log(`[AUTH REFRESH] New Access Token issued for user: ${activeUser.email} (${activeUser.id})`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        accessToken: newAccessToken,
+        expiresIn: 900,
+        user: {
+          id: activeUser.id,
+          username: activeUser.username,
+          fullName: activeUser.username,
+          email: activeUser.email,
+          role: activeUser.role
+        }
+      }));
+    } catch (refreshErr) {
+      console.error('[AUTH REFRESH ERROR]:', refreshErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: refreshErr.message || 'Token refresh failed' }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 2.2: Logout and Revoke Refresh Token
+  // -------------------------------------------------------------
+  if (req.method === 'POST' && urlPath === '/api/v1/auth/logout') {
+    try {
+      const data = await parseJsonBody(req);
+      const { refreshToken } = data;
+
+      if (refreshToken && sql) {
+        await sql`
+          UPDATE public.refresh_tokens
+          SET revoked = TRUE
+          WHERE token = ${refreshToken}
+        `;
+        console.log('[AUTH LOGOUT] Refresh token successfully revoked in PostgreSQL DB');
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: true, message: 'Logged out successfully' }));
+    } catch (logoutErr) {
+      console.error('[AUTH LOGOUT ERROR]:', logoutErr.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: logoutErr.message }));
+    }
+  }
+
+  // -------------------------------------------------------------
+  // Route 2.3: Current Authenticated User Info (GET /api/v1/auth/me)
+  // -------------------------------------------------------------
+  if (req.method === 'GET' && urlPath === '/api/v1/auth/me') {
+    try {
+      const decodedUser = verifyAccessToken(req);
+      if (!decodedUser) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ success: false, error: 'Unauthorized: Missing, invalid, or expired Access Token' }));
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({
+        success: true,
+        user: {
+          id: decodedUser.id,
+          username: decodedUser.username,
+          fullName: decodedUser.username,
+          email: decodedUser.email,
+          role: decodedUser.role
+        }
+      }));
+    } catch (meErr) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ success: false, error: meErr.message }));
     }
   }
 
@@ -401,7 +633,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // -------------------------------------------------------------
-  // Route 2.6: Verify OTP and Reset Password in PostgreSQL Database
+  // Route 2.6: Verify OTP and Reset Password in PostgreSQL Database (Argon2id)
   // -------------------------------------------------------------
   if (req.method === 'POST' && urlPath === '/api/v1/auth/reset-password') {
     try {
@@ -435,14 +667,20 @@ const server = http.createServer(async (req, res) => {
         return res.end(JSON.stringify({ success: false, error: 'OTP has expired. Please request a new code.' }));
       }
 
-      // Update password in PostgreSQL
+      // Hash new password using Argon2id and update in PostgreSQL
       if (sql) {
+        const hashedPassword = await argon2.hash(newPassword.trim(), {
+          type: argon2.argon2id,
+          memoryCost: 65536,
+          timeCost: 3,
+          parallelism: 4
+        });
         await sql`
           UPDATE public.users
-          SET password = ${newPassword.trim()}, updated_at = NOW()
+          SET password = ${hashedPassword}, updated_at = NOW()
           WHERE LOWER(email) = ${cleanEmail}
         `;
-        console.log(`[AUTH PW RESET] Password updated successfully in PostgreSQL for: ${cleanEmail}`);
+        console.log(`[AUTH PW RESET] Password hashed with Argon2id and updated in PostgreSQL for: ${cleanEmail}`);
       }
 
       otpStore.delete(cleanEmail);
